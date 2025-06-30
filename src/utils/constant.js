@@ -1,0 +1,10 @@
+const MAX_FILE_SIZE = 10 * 1024 * 1024;
+const MAX_FILES = 5;
+const POPULARITY_THRESHOLD = 1000
+
+
+module.exports = {
+    MAX_FILES,
+    MAX_FILE_SIZE,
+    POPULARITY_THRESHOLD
+}

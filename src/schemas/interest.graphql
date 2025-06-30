@@ -1,0 +1,50 @@
+type Interest {
+  id: ID!
+  name: String!
+  slug: String!
+  description: String
+  iconUrl: String
+  colorHex: String
+  category: InterestCategory!
+  isPopular: Boolean!
+  followersCount: Int!
+  sortOrder: Int!
+  isActive: Boolean!
+}
+
+type InterestEdge {
+  node: Interest!
+  cursor: String!
+}
+
+type InterestConnection {
+  edges: [InterestEdge!]!
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+
+type PageInfo {
+  hasNextPage: Boolean!
+  endCursor: String
+}
+
+enum InterestCategory {
+  TECHNOLOGY
+  TRAVEL
+  SCIENCE
+  HEALTH_FITNESS
+  BUSINESS
+  ARTS_CULTURE
+  FOOD_DRINK
+  SPORTS
+  EDUCATION
+  LIFESTYLE
+  MUSIC
+  GAMING
+  FASHION
+  PHOTOGRAPHY
+}
+
+type Query {
+  interests(query: String, category: InterestCategory, popular: Boolean, first: Int = 10, after: String): InterestConnection!
+} 

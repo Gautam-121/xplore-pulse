@@ -1,0 +1,132 @@
+# User GraphQL Schema
+
+type User {
+  id: ID!
+  phoneNumber: String!
+  countryCode: String!
+  name: String
+  email: String
+  bio: String
+  profileImageUrl: String
+  isVerified: Boolean!
+  isActive: Boolean!
+  isProfileComplete: Boolean!
+  onboardingStep: OnboardingStep!
+  notificationSettings: NotificationSettings!
+  interests: [Interest!]!
+  createdAt: DateTime!
+  updatedAt: DateTime!
+  lastActiveAt: DateTime!
+  authTokens: AuthTokens
+}
+
+enum OnboardingStep {
+  PHONE_VERIFICATION
+  PROFILE_SETUP
+  INTERESTS_SELECTION
+  COMMUNITY_RECOMMENDATIONS
+  COMPLETED
+}
+
+type NotificationSettings {
+  pushNotifications: Boolean!
+  emailNotifications: Boolean!
+  communityUpdates: Boolean!
+  eventReminders: Boolean!
+}
+
+# User Input Types
+input ProfileSetupInput {
+  name: String!
+  bio: String
+  profileImage: Upload
+}
+
+input UpdateProfileInput {
+  name: String
+  bio: String
+  profileImage: Upload
+  removeProfileImage: Boolean
+}
+
+input NotificationSettingsInput {
+  pushNotifications: Boolean
+  emailNotifications: Boolean
+  communityUpdates: Boolean
+  eventReminders: Boolean
+}
+
+
+# User Response Types
+type DeleteAccountResponse {
+  success: Boolean!
+  message: String!
+  scheduledDeletionDate: DateTime!
+}
+
+type ProfileSetupResponse {
+  success: Boolean!
+  user: User!
+  message: String!
+}
+
+type SelectInterestsResponse {
+  success: Boolean!
+  user: User!
+  message: String!
+}
+
+type UpdateOnboardingResponse {
+  success: Boolean!
+  user: User!
+  message: String!
+}
+
+type UpdateProfileResponse {
+  success: Boolean!
+  user: User!
+  message: String!
+}
+
+type UpdateNotificationSettingsResponse {
+  success: Boolean!
+  notificationSettings: NotificationSettings!
+  message: String!
+}
+
+
+type PublicUserProfile {
+  id: ID!
+  name: String
+  bio: String
+  profileImageUrl: String
+  isVerified: Boolean!
+  interests: [Interest!]!
+  createdAt: DateTime!
+}
+
+type SearchUsersResponse {
+  users: [PublicUserProfile!]!
+  totalCount: Int!
+  hasMore: Boolean!
+}
+
+# User Mutations
+extend type Mutation {
+  # Profile Setup
+  completeProfileSetup(input: ProfileSetupInput!): ProfileSetupResponse!
+  selectInterests(interestIds: [ID!]!): SelectInterestsResponse!
+  updateOnboardingStep(step: OnboardingStep!): UpdateOnboardingResponse!
+  # Profile Management
+  updateUserProfile(input: UpdateProfileInput!): UpdateProfileResponse!
+  updateNotificationSettings(input: NotificationSettingsInput!): UpdateNotificationSettingsResponse!
+  # Account Management
+  deleteAccount(reason: String): DeleteAccountResponse!
+  cancelAccountDeletion: GenericResponse!
+}
+
+# User Queries
+extend type Query {
+  # User queries
+  currentUser: User
+} 

@@ -1,0 +1,122 @@
+# Authentication GraphQL Schema
+
+# Auth Types
+type AuthTokens {
+  accessToken: String!
+  refreshToken: String!
+  expiresAt: DateTime!
+}
+
+# Active Sessions Types
+type AuthSession {
+  id: ID!
+  deviceId: String!
+  deviceType: String!
+  deviceName: String
+  appVersion: String!
+  osVersion: String!
+  ipAddress: String
+  userAgent: String
+  lastUsedAt: DateTime!
+  tokenExpiresAt: DateTime!
+  refreshExpiresAt: DateTime!
+  isCurrentSession: Boolean!
+}
+
+type ActiveSessionsResponse {
+  success: Boolean!
+  sessions: [AuthSession!]!
+  totalCount: Int!
+}
+
+# Auth/OTP Inputs and Types
+input SendOTPInput {
+  phoneNumber: String!
+  countryCode: String!
+  type: OTPType!
+}
+
+enum OTPType {
+  SIGNUP
+  LOGIN
+  VERIFICATION
+  PASSWORD_RESET
+}
+
+input VerifyOTPInput {
+  phoneNumber: String!
+  countryCode: String!
+  otp: String!
+  type: OTPType!
+  deviceInfo: DeviceInfoInput!
+  role: UserRole
+}
+
+input DeviceInfoInput {
+  deviceId: String!
+  deviceType: String!
+  deviceName: String
+  appVersion: String!
+  osVersion: String!
+  fcmToken: String
+}
+
+# User roles
+enum UserRole {
+  USER
+  ADMIN
+  MODERATOR
+}
+
+# Auth Response Types
+type SendOTPResponse {
+  success: Boolean!
+  message: String!
+  otpExpiresAt: DateTime
+  retryAfter: Int
+}
+
+type VerifyOTPResponse {
+  success: Boolean!
+  message: String!
+  user: User
+  isNewUser: Boolean!
+  authTokens: AuthTokens
+}
+
+type RefreshTokenResponse {
+  success: Boolean!
+  authTokens: AuthTokens
+  message: String!
+}
+
+# Auth Mutations
+extend type Mutation {
+  # Authentication
+  sendOTP(input: SendOTPInput!): SendOTPResponse!
+  verifyOTP(input: VerifyOTPInput!): VerifyOTPResponse!
+  refreshToken(refreshToken: String!): RefreshTokenResponse!
+  logout(deviceId: String, allDevices: Boolean): GenericResponse!
+  googleAuth(input: GoogleAuthInput!): GoogleAuthResponse!
+  verifyGooglePhoneOTP(input: VerifyOTPInput!): GoogleAuthResponse!
+}
+
+# Auth Queries
+extend type Query {
+  activeSessions: ActiveSessionsResponse!
+}
+
+input GoogleAuthInput {
+  code: String!
+  deviceInfo: DeviceInfoInput!
+}
+
+type GoogleAuthResponse {
+  success: Boolean!
+  user: User
+  isNewUser: Boolean!
+  onboardingStep: String!
+  authTokens: AuthTokens
+  phoneVerificationToken: String
+  message: String!
+} 

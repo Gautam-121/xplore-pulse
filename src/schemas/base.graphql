@@ -1,0 +1,20 @@
+# Base GraphQL Schema - Defines base types that are extended by other schemas
+
+scalar DateTime
+scalar Upload
+
+# Base types that can be extended
+type Query {
+  _: Boolean
+}
+
+type Mutation {
+  _: Boolean
+}
+
+# Common response type used across multiple schemas
+type GenericResponse {
+  success: Boolean!
+  message: String!
+  code: String
+} 

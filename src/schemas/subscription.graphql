@@ -1,0 +1,22 @@
+type Subscription {
+  userStatusUpdates(userId: ID!): UserStatusUpdate!
+  profileUpdates: ProfileUpdate!
+}
+
+type UserStatusUpdate {
+  userId: ID!
+  isOnline: Boolean!
+  lastActiveAt: DateTime!
+}
+
+type ProfileUpdate {
+  user: User!
+  updateType: ProfileUpdateType!
+}
+
+enum ProfileUpdateType {
+  PROFILE_UPDATED
+  INTERESTS_UPDATED
+  SETTINGS_UPDATED
+  VERIFICATION_STATUS_CHANGED
+} 
