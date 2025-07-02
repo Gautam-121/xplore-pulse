@@ -1,7 +1,6 @@
 const express = require('express');
 const router = express.Router();
 
-const smsService = require('../services/smsService');
 const mailerService = require('../services/mailerService');
 const fileUploadService = require('../services/fileUploadService');
 const rateLimitService = require('../services/rateLimitService');
@@ -15,7 +14,6 @@ router.get('/liveness', (req, res) => {
 
 router.get('/readiness', async (req, res) => {
   const checks = await Promise.all([
-    smsService.healthCheck?.(),
     mailerService.healthCheck?.(),
     fileUploadService.healthCheck?.(),
     rateLimitService.healthCheck?.(),

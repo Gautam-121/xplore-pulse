@@ -31,6 +31,10 @@ module.exports = (sequelize, Sequelize) => {
           type: Sequelize.TEXT,
           validate: { len: [0, 500] }
         },
+        location: {
+          type: Sequelize.JSONB,
+          defaultValue: {}
+        },
         profileImageUrl: {
           type: Sequelize.TEXT,
         },
@@ -68,6 +72,14 @@ module.exports = (sequelize, Sequelize) => {
           type: Sequelize.BOOLEAN,
           defaultValue: true,
         },
+        ownedCommunitiesCount: {
+          type: Sequelize.INTEGER,
+          defaultValue: 0
+        },
+        joinedCommunitiesCount: {
+          type: Sequelize.INTEGER,
+          defaultValue: 0
+        },
         // Notification settings
         pushNotificationsEnabled: {
           type: Sequelize.BOOLEAN,
@@ -93,7 +105,6 @@ module.exports = (sequelize, Sequelize) => {
           type: Sequelize.DATE,
         }
       }, {
-        paranoid: true, // Soft delete
         indexes: [
           {
             unique: true,
@@ -104,6 +115,11 @@ module.exports = (sequelize, Sequelize) => {
           },
           {
             fields: ['isActive', 'deletedAt']
+          },
+          {
+            name: 'idx_user_location_gin',
+            using: 'gin',
+            fields: ['location']
           }
         ],
         scopes: {

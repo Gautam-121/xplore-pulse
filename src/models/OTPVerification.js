@@ -13,18 +13,29 @@ module.exports = (sequelize, Sequelize) => {
           type: Sequelize.STRING(5),
           allowNull: false,
         },
-        // OTP details
+        // OTP details - keeping for backward compatibility and fallback
         otpCode: {
           type: Sequelize.STRING(10),
-          allowNull: false,
+          allowNull: true, // Made nullable since Kaleyra generates OTP
         },
         otpHash: {
           type: Sequelize.STRING(256),
-          allowNull: false,
+          allowNull: true, // Made nullable since we're using Kaleyra verification
         },
         otpType: {
-          type: Sequelize.ENUM('SIGNUP', 'LOGIN', 'VERIFICATION', 'PASSWORD_RESET'),
+          type: Sequelize.ENUM('PHONE_AUTH','POST_GOOGLE_VERIFY'),
           allowNull: false,
+        },
+        // Kaleyra specific fields
+        verifyId: {
+          type: Sequelize.STRING(255),
+          allowNull: true, // The verify_id returned by Kaleyra
+          unique: true
+        },
+        provider: {
+          type: Sequelize.ENUM('KALEYRA', 'TWILIO', 'MANUAL'),
+          defaultValue: 'KALEYRA',
+          allowNull: false
         },
         // Verification status
         isVerified: {
@@ -37,7 +48,7 @@ module.exports = (sequelize, Sequelize) => {
         },
         maxAttempts: {
           type: Sequelize.INTEGER,
-          defaultValue: 5,
+          defaultValue: 5, // Note: Kaleyra has its own attempt limits
         },
         // Timing
         expiresAt: {
@@ -47,12 +58,22 @@ module.exports = (sequelize, Sequelize) => {
         verifiedAt: {
           type: Sequelize.DATE,
         },
-        // Rate limiting
+        // Rate limiting and tracking
         ipAddress: {
           type: Sequelize.INET,
         },
         userAgent: {
           type: Sequelize.TEXT,
+        },
+        // Additional Kaleyra response data
+        providerResponse: {
+          type: Sequelize.JSONB, // Store additional response data from Kaleyra
+          allowNull: true
+        },
+        // Status tracking
+        providerStatus: {
+          type: Sequelize.STRING(50), // Store status from Kaleyra (e.g., 'pending', 'approved', 'failed')
+          allowNull: true
         }
       }, {
         indexes: [
@@ -61,6 +82,18 @@ module.exports = (sequelize, Sequelize) => {
           },
           {
             fields: ['expiresAt']
+          },
+          {
+            fields: ['verifyId'], // Index for Kaleyra verify_id
+            unique: true,
+            where: {
+              verifyId: {
+                [Sequelize.Op.ne]: null
+              }
+            }
+          },
+          {
+            fields: ['provider', 'otpType']
           }
         ]
       });

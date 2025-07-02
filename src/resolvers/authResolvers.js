@@ -7,7 +7,7 @@ const User = db.User
 const AuthSession = db.AuthSession
 const OTPVerification = db.OtpVerification
 const { requireAuth } = require("../middleware/auth")
-const smsService = require('../services/smsService');
+const smsService = require('../services/kaleraSmsService');
 const logger = require('../utils/logger');
 const { OAuth2Client } = require('google-auth-library');
 const { Op } = require('sequelize');
@@ -74,10 +74,17 @@ const authResolvers = {
   },
 
   Mutation: {
-    sendOTP: async (_, { input }) => {
+    sendOTP: async (_, { input }, { ipAddress, userAgent }) => {
       const { phoneNumber, countryCode, type } = input;
-      logger.info('Sending OTP', { phoneNumber, countryCode, type });
+      logger.info('Sending OTP via Kaleyra', { phoneNumber, countryCode, type });
 
+      // Handle user creation/login logic
+      let user = await User.findOne({
+        where: { phoneNumber, countryCode },
+      });
+      if (user) checkUserActiveOrThrow(user);
+
+      // Rate limiting check
       const recentOTPs = await OTPVerification.count({
         where: {
           phoneNumber,
@@ -96,45 +103,74 @@ const authResolvers = {
 
       const transaction = await sequelize.transaction();
       try {
-        const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
-        const otpHash = crypto.createHash('sha256').update(otpCode).digest('hex');
-        const expiresAt = Date.now() + 10 * 60 * 1000; // Expires in 10 minutes
+        // Send OTP via Kaleyra
+        const kaleyraSMSResult = await smsService.sendOTPSMS(phoneNumber, countryCode);
 
+        if (!kaleyraSMSResult.success || !kaleyraSMSResult.verifyId) {
+          throw new GraphQLError('Failed to initiate OTP with provider', {
+            extensions: { code: 'OTP_PROVIDER_FAILED' }
+          });
+        }
+
+        // Calculate expiration (default 10 minutes, or use Kaleyra's expiration if provided)
+        const expiresAt = Date.now() + 10 * 60 * 1000
+
+        // Store OTP record with Kaleyra verify_id
         await OTPVerification.create({
           phoneNumber,
           countryCode,
-          otpCode,
           otpType: type,
-          otpHash,
-          expiresAt
+          verifyId: kaleyraSMSResult.verifyId,
+          provider: 'KALEYRA',
+          expiresAt,
+          ipAddress,
+          userAgent,
+          providerResponse: {
+            messageId: kaleyraSMSResult.messageId,
+            status: kaleyraSMSResult.status,
+            sentAt: new Date()
+          },
+          providerStatus: kaleyraSMSResult.status || 'pending'
         }, { transaction });
 
-        await smsService.sendSMS(phoneNumber, countryCode, `Your Xplore verification code is: ${otpCode}`);
         await transaction.commit();
 
-        logger.info('OTP sent successfully', { phoneNumber, countryCode, expiresAt, type });
-        return { success: true, message: 'OTP sent successfully', otpExpiresAt: new Date(expiresAt), retryAfter: 60 };
+        logger.info('OTP sent successfully via Kaleyra', {
+          phoneNumber,
+          countryCode,
+          verifyId: kaleyraSMSResult.verifyId,
+          expiresAt: new Date(expiresAt),
+          type
+        });
+
+        return {
+          success: true,
+          message: 'OTP sent successfully',
+          retryAfter: 60,
+        };
+
       } catch (error) {
         await transaction.rollback();
-        logger.error('Failed to send OTP', { phoneNumber, error });
-        if (error instanceof GraphQLError) throw error
+        logger.error('Failed to send OTP via Kaleyra', { phoneNumber, error: error.message });
+        if (error instanceof GraphQLError) throw error;
         throw new GraphQLError('Failed to send OTP', { extensions: { code: 'SEND_OTP_FAILED' } });
       }
     },
 
     verifyOTP: async (_, { input }, { ipAddress, userAgent }) => {
       const { phoneNumber, countryCode, otp, deviceInfo, type, role } = input;
-      logger.info('Verifying OTP', { phoneNumber, countryCode, type });
+      logger.info('Verifying OTP via Kaleyra', { phoneNumber, countryCode, type });
 
       const transaction = await sequelize.transaction();
       try {
-        // Lock OTP row for update to prevent race conditions
+        // Find the most recent OTP record for this phone number and type
         const otpRecord = await OTPVerification.findOne({
           where: {
             phoneNumber,
             countryCode,
             otpType: type,
             isVerified: false,
+            provider: 'KALEYRA',
             expiresAt: { [Op.gt]: new Date() }
           },
           order: [['createdAt', 'DESC']],
@@ -142,55 +178,107 @@ const authResolvers = {
           transaction
         });
 
-        if (!otpRecord) {
+        if (!otpRecord || !otpRecord.verifyId) {
           logger.warn('No valid OTP record found', { phoneNumber, countryCode, type });
-          throw new GraphQLError('Invalid or expired OTP', { extensions: { code: 'INVALID_OTP' } });
+          throw new GraphQLError('Invalid or expired OTP session', {
+            extensions: { code: 'INVALID_OTP_SESSION' }
+          });
         }
 
+        // Check local attempt limits (Kaleyra also has its own limits)
         if (otpRecord.verificationAttempts >= otpRecord.maxAttempts) {
-          logger.warn('OTP verification attempts exceeded', { phoneNumber });
-          throw new GraphQLError('Maximum verification attempts exceeded', { extensions: { code: 'OTP_ATTEMPTS_EXCEEDED' } });
+          logger.warn('Local OTP verification attempts exceeded', { phoneNumber });
+          throw new GraphQLError('Maximum verification attempts exceeded', {
+            extensions: { code: 'OTP_ATTEMPTS_EXCEEDED' }
+          });
         }
 
-        const otpHash = crypto.createHash('sha256').update(otp).digest('hex');
-        if (otpHash !== otpRecord.otpHash) {
+        // Verify OTP with Kaleyra
+        let kaleraVerifyResult;
+        try {
+          kaleraVerifyResult = await smsService.verifyOTP(otpRecord.verifyId, otp);
+        } catch (kaleraError) {
+          // Increment attempt counter for provider errors too
           await otpRecord.increment('verificationAttempts', { transaction });
-          logger.warn('Invalid OTP entered', { phoneNumber });
-          throw new GraphQLError('Invalid OTP', { extensions: { code: 'INVALID_OTP' } });
+          throw kaleraError;
+        }
+
+        // Increment attempt counter regardless of result
+        await otpRecord.increment('verificationAttempts', { transaction });
+
+        if (!kaleraVerifyResult.success || !kaleraVerifyResult.isValid) {
+          // Update provider status
+          await otpRecord.update({
+            providerStatus: kaleraVerifyResult.status || 'failed',
+            providerResponse: {
+              ...otpRecord.providerResponse,
+              lastVerifyAttempt: {
+                result: kaleraVerifyResult,
+                attemptedAt: new Date()
+              }
+            }
+          }, { transaction });
+
+          logger.warn('OTP verification failed with Kaleyra', {
+            phoneNumber,
+            verifyId: otpRecord.verifyId,
+            status: kaleraVerifyResult.status
+          });
+
+          throw new GraphQLError(kaleraVerifyResult.message || 'Invalid OTP', {
+            extensions: { code: 'INVALID_OTP' }
+          });
         }
 
         // Mark as verified
-        await otpRecord.update({ isVerified: true, verifiedAt: new Date() }, { transaction });
+        await otpRecord.update({
+          isVerified: true,
+          verifiedAt: new Date(),
+          providerStatus: kaleraVerifyResult.status || 'approved',
+          providerResponse: {
+            ...otpRecord.providerResponse,
+            verificationResult: {
+              result: kaleraVerifyResult,
+              verifiedAt: new Date()
+            }
+          }
+        }, { transaction });
 
-        // Lock user row if exists
+        // Handle user creation/login logic
         let user = await User.findOne({
           where: { phoneNumber, countryCode },
           lock: transaction.LOCK.UPDATE,
           transaction
         });
         if (user) checkUserActiveOrThrow(user);
-        const isNewUser = !user;
 
+        const isNewUser = !user;
         if (isNewUser) {
-          user = await User.create(
-            {
-              phoneNumber,
-              countryCode,
-              onboardingStep: 'PROFILE_SETUP',
-              role: role || 'USER'
-            },
-            { transaction }
-          );
-          logger.info('New user created via OTP login', { userId: user.id });
+          user = await User.create({
+            phoneNumber,
+            countryCode,
+            onboardingStep: 'PROFILE_SETUP',
+            role: role || 'USER'
+          }, { transaction });
+          logger.info('New user created via Kaleyra OTP', { userId: user.id });
         } else {
-          logger.info('Existing user logged in via OTP', { userId: user.id });
+          logger.info('Existing user logged in via Kaleyra OTP', { userId: user.id });
         }
 
-        const { accessToken, refreshToken, expiresAt } = await generateTokens(user.id, deviceInfo, user.role, transaction, ipAddress, userAgent);
+        // Generate tokens
+        const { accessToken, refreshToken } = await generateTokens(
+          user.id,
+          deviceInfo,
+          user.role,
+          transaction,
+          ipAddress,
+          userAgent
+        );
 
-        logger.info('Tokens issued after OTP verification', {
+        logger.info('Tokens issued after Kaleyra OTP verification', {
           userId: user.id,
-          deviceId: deviceInfo?.deviceId
+          deviceId: deviceInfo?.deviceId,
+          verifyId: otpRecord.verifyId
         });
 
         await transaction.commit();
@@ -200,12 +288,13 @@ const authResolvers = {
           message: isNewUser ? 'Account created successfully' : 'Login successful',
           user,
           isNewUser,
-          authTokens: { accessToken, refreshToken, expiresAt }
+          authTokens: { accessToken, refreshToken }
         };
+
       } catch (error) {
         await transaction.rollback();
-        logger.error('OTP verification failed', { phoneNumber, error });
-        if (error instanceof GraphQLError) throw error
+        logger.error('OTP verification failed', { phoneNumber, error: error.message });
+        if (error instanceof GraphQLError) throw error;
         throw new GraphQLError('Failed to verify OTP', { extensions: { code: 'VERIFY_OTP_FAILED' } });
       }
     },
@@ -283,9 +372,10 @@ const authResolvers = {
       }
     },
 
-    googleAuth: async (_, { input }) => {
+    googleAuth: async (_, { input }, { ipAddress, userAgent }) => {
       const { code, deviceInfo } = input;
       logger.info('Google auth initiated');
+      const transaction = await sequelize.transaction();
       try {
         if (!code) {
           logger.warn('Google auth failed: Missing token code');
@@ -342,10 +432,10 @@ const authResolvers = {
         const googleId = payload.sub;
 
         // 2. Find user by googleId or email
-        let user = await User.findOne({ where: { googleId } });
+        let user = await User.findOne({ where: { googleId }, transaction });
         let isNewUser = false;
         if (!user) {
-          user = await User.findOne({ where: { email } });
+          user = await User.findOne({ where: { email }, transaction });
         }
         if (user) checkUserActiveOrThrow(user);
         // 3. If user does not exist, create
@@ -359,7 +449,7 @@ const authResolvers = {
             onboardingStep: 'PHONE_VERIFICATION',
             isProfileComplete: false,
             isActive: true
-          });
+          }, { transaction });
           isNewUser = true;
           logger.info('New user created via Google Auth', { userId: user.id });
           // Issue temporary phone verification token
@@ -368,6 +458,7 @@ const authResolvers = {
             process.env.ACCESS_TOKEN_SECRET,
             { expiresIn: '15m' }
           );
+          await transaction.commit();
           return {
             success: true,
             user,
@@ -380,7 +471,7 @@ const authResolvers = {
         } else {
           // If user exists but not linked, update googleId
           if (!user.googleId) {
-            await user.update({ googleId });
+            await user.update({ googleId }, { transaction });
           }
           // If user is not verified (phone not verified), require phone verification
           if (!user.isVerified || !user.phoneNumber) {
@@ -391,6 +482,7 @@ const authResolvers = {
               process.env.ACCESS_TOKEN_SECRET,
               { expiresIn: '15m' }
             );
+            await transaction.commit();
             return {
               success: true,
               user,
@@ -405,7 +497,9 @@ const authResolvers = {
         }
 
         // 4. Issue tokens
-        const { accessToken, refreshToken, expiresAt } = await generateTokens(user.id, deviceInfo, user.role);
+        const { accessToken, refreshToken, expiresAt } = await generateTokens(user.id, deviceInfo, user.role, transaction, ipAddress, userAgent);
+
+        await transaction.commit();
 
         logger.info('Tokens issued after Google Auth', { userId: user.id, deviceId: deviceInfo.deviceId });
         return {
@@ -418,6 +512,7 @@ const authResolvers = {
           message: isNewUser ? 'Account created via Google' : 'Login successful'
         };
       } catch (error) {
+        await transaction.rollback();
         logger.error('Google Auth failed', { error: error.message });
         if (error instanceof GraphQLError) throw error;
         throw new GraphQLError('Google authentication failed', { extensions: { code: 'GOOGLE_AUTH_FAILED' } });
@@ -517,37 +612,91 @@ const authResolvers = {
       if (!context.user || context.user.onboardingStep !== 'PHONE_VERIFICATION') {
         throw new GraphQLError('Not authorized for Google phone verification', { extensions: { code: 'UNAUTHORIZED' } });
       }
+
       const transaction = await sequelize.transaction();
       try {
-        // Lock OTP row for update
+
+        // Find the most recent OTP record for this phone number and type
         const otpRecord = await OTPVerification.findOne({
           where: {
             phoneNumber,
             countryCode,
             otpType: type,
             isVerified: false,
+            provider: 'KALEYRA',
             expiresAt: { [Op.gt]: new Date() }
           },
           order: [['createdAt', 'DESC']],
           lock: transaction.LOCK.UPDATE,
           transaction
         });
-        if (!otpRecord) {
+
+        if (!otpRecord || !otpRecord.verifyId) {
           logger.warn('No valid OTP record found', { phoneNumber, countryCode, type });
-          throw new GraphQLError('Invalid or expired OTP', { extensions: { code: 'INVALID_OTP' } });
+          throw new GraphQLError('Invalid or expired OTP session', {
+            extensions: { code: 'INVALID_OTP_SESSION' }
+          });
         }
+
+        // Check local attempt limits (Kaleyra also has its own limits)
         if (otpRecord.verificationAttempts >= otpRecord.maxAttempts) {
-          logger.warn('OTP verification attempts exceeded', { phoneNumber });
-          throw new GraphQLError('Maximum verification attempts exceeded', { extensions: { code: 'OTP_ATTEMPTS_EXCEEDED' } });
+          logger.warn('Local OTP verification attempts exceeded', { phoneNumber });
+          throw new GraphQLError('Maximum verification attempts exceeded', {
+            extensions: { code: 'OTP_ATTEMPTS_EXCEEDED' }
+          });
         }
-        const otpHash = crypto.createHash('sha256').update(otp).digest('hex');
-        if (otpHash !== otpRecord.otpHash) {
+
+        // Verify OTP with Kaleyra
+        let kaleraVerifyResult;
+        try {
+          kaleraVerifyResult = await smsService.verifyOTP(otpRecord.verifyId, otp);
+        } catch (kaleraError) {
+          // Increment attempt counter for provider errors too
           await otpRecord.increment('verificationAttempts', { transaction });
-          logger.warn('Invalid OTP entered', { phoneNumber });
-          throw new GraphQLError('Invalid OTP', { extensions: { code: 'INVALID_OTP' } });
+          throw kaleraError;
         }
+
+        // Increment attempt counter regardless of result
+        await otpRecord.increment('verificationAttempts', { transaction });
+
+        if (!kaleraVerifyResult.success || !kaleraVerifyResult.isValid) {
+          // Update provider status
+          await otpRecord.update({
+            providerStatus: kaleraVerifyResult.status || 'failed',
+            providerResponse: {
+              ...otpRecord.providerResponse,
+              lastVerifyAttempt: {
+                result: kaleraVerifyResult,
+                attemptedAt: new Date()
+              }
+            }
+          }, { transaction });
+
+          logger.warn('OTP verification failed with Kaleyra', {
+            phoneNumber,
+            verifyId: otpRecord.verifyId,
+            status: kaleraVerifyResult.status
+          });
+
+          throw new GraphQLError(kaleraVerifyResult.message || 'Invalid OTP', {
+            extensions: { code: 'INVALID_OTP' }
+          });
+        }
+
         // Mark as verified
-        await otpRecord.update({ isVerified: true, verifiedAt: new Date() }, { transaction });
+        await otpRecord.update({
+          isVerified: true,
+          verifiedAt: new Date(),
+          providerStatus: kaleraVerifyResult.status || 'approved',
+          providerResponse: {
+            ...otpRecord.providerResponse,
+            verificationResult: {
+              result: kaleraVerifyResult,
+              verifiedAt: new Date()
+            }
+          }
+        }, { transaction });
+
         // Update user
         const user = await User.findByPk(context.user.id, { transaction });
         if (!user) {
@@ -597,7 +746,7 @@ async function generateTokens(userId, deviceInfo, role, transaction, ipAddress, 
   const accessTokenHash = crypto.createHash('sha256').update(accessToken).digest('hex');
   const refreshTokenHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
 
-  const tokenExpiresAt = new Date(Date.now() + 60 * 60 * 1000);
+  const tokenExpiresAt = new Date(Date.now() + 5 * 60 * 60 * 1000);
   const refreshExpiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
 
   await AuthSession.destroy({

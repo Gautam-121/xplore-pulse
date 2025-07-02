@@ -9,12 +9,26 @@ module.exports = (sequelize, Sequelize) => {
         name: {
           type: Sequelize.STRING(100),
           allowNull: false,
-          unique: true
+          unique: true,
+          set(value) {
+            this.setDataValue('name', value ? value.toLowerCase() : value);
+          },
+          get() {
+            const rawValue = this.getDataValue('name');
+            if (!rawValue) return rawValue;
+            return rawValue.charAt(0).toUpperCase() + rawValue.slice(1).toLowerCase();
+          }
         },
         slug: {
           type: Sequelize.STRING(100),
           allowNull: false,
-          unique: true
+          unique: true,
+          set(value) {
+            this.setDataValue('slug', value ? value.toLowerCase() : value);
+          },
+          get() {
+            return this.getDataValue('slug'); // always lowercase
+          }
         },
         description: Sequelize.TEXT,
         iconUrl: {

@@ -1,8 +1,8 @@
 const { GraphQLError } = require('graphql');
-const { uploadFile } = require('../services/fileUploadService');
 const logger = require('../utils/logger');
 const db = require("../config/dbConfig")
 const UserModel = db.User
+const AuthSession = db.AuthSession;
 const InterestModel = db.Interest
 const UserInterestModel = db.UserInterest
 const sequelize = db.sequelize
@@ -45,11 +45,10 @@ const userResolvers = {
       let uploadedFileUrl = null;
       try {
         const { name, bio, profileImage } = input;
-        logger.info('Starting profile setup', { userId: user.id });    
+        logger.info('Starting profile setup', { userId: user.id });  
         const updateData = { name , bio };
         if (profileImage) {
           // Validate image
-          console.log("file", profileImage)
           fileUploadService.validateImageFile(profileImage.file)
           try {
             const fileUrl = await fileUploadService.uploadFile(profileImage.file, 'prompthkithustlebot');
@@ -118,22 +117,40 @@ const userResolvers = {
       logger.info('Selecting interests', { userId: user.id, interestIds });
       const transaction = await sequelize.transaction();
       try {
-
-        if(interestIds.length === 0){
+        // Edge case: No interests provided
+        if (!Array.isArray(interestIds) || interestIds.length === 0) {
           throw new GraphQLError('Please select at least one interest', {
             extensions: { code: 'BAD_USER_INPUT', argumentName: 'interestIds' }
           });
         }
 
+        // Edge case: Duplicate IDs in input
+        const uniqueInterestIds = [...new Set(interestIds)];
+        if (uniqueInterestIds.length !== interestIds.length) {
+          logger.warn('Duplicate interest IDs provided', { userId: user.id, interestIds });
+          throw new GraphQLError('Duplicate interest IDs are not allowed', {
+            extensions: { code: 'BAD_USER_INPUT', argumentName: 'interestIds' }
+          });
+        }
+
+        // Fetch interests from DB
         const interests = await InterestModel.findAll({
           where: { id: interestIds, isActive: true },
           transaction
         });
 
+        // Edge case: Some IDs not found in DB
         if (interests.length !== interestIds.length) {
-          throw new GraphQLError('Some interests are invalid', {
-            extensions: { code: 'BAD_USER_INPUT', argumentName: 'interestIds' }
-          });
+          // Find which IDs are missing
+          const foundIds = interests.map(i => i.id);
+          const missingIds = interestIds.filter(id => !foundIds.includes(id));
+          logger.warn('Some interest IDs not found in DB', { userId: user.id, missingIds });
+          throw new GraphQLError(
+            `Some interests are invalid or not found`,
+            {
+              extensions: { code: 'BAD_USER_INPUT', argumentName: 'interestIds', missingIds }
+            }
+          );
         }
 
         // Get existing interests of the user
@@ -143,7 +160,6 @@ const userResolvers = {
           raw: true,
           transaction
         });
-
         const oldInterestIds = oldInterests.map(i => i.interestId);
 
         // Remove old links
@@ -202,14 +218,14 @@ const userResolvers = {
         await transaction.rollback();
         logger.error('Interest selection failed', { userId: user.id, error: error.message });
         if(error instanceof GraphQLError) throw error
-        throw new GraphQLError('Falied to selected interest', {
+        throw new GraphQLError('Failed to select interest', {
           extensions: { code: 'SELECT_INTEREST_FAILED' }
         });
       }
     }),
 
     updateOnboardingStep: requireAuth(async (_, { step }, { user }) => {    
-      if (!['COMPLETED'].includes(step)) {
+      if (!['PHONE_VERIFICATION', 'PROFILE_SETUP' , 'INTERESTS_SELECTION', 'COMMUNITY_RECOMMENDATIONS', 'COMPLETED'].includes(step)) {
         logger.warn('Invalid onboarding step received', { userId: user.id, step });
         throw new GraphQLError(`Invalid onboarding step: ${step}`, {
           extensions: { code: 'BAD_USER_INPUT' }
@@ -294,11 +310,7 @@ const userResolvers = {
               error: deleteErr.message,
               stack: deleteErr.stack
             });
-            throw new GraphQLError('Failed to delete existing profile image', {
-              extensions: {
-                code: 'FILE_DELETE_FAILED',
-              }
-            });
+            if(!profileImage?.file) throw deleteErr
           }
         }
 
@@ -306,8 +318,7 @@ const userResolvers = {
         if (profileImage) {
           try {
             // Validate image
-            fileUploadService.validateImageFile(profileImage);
-    
+            fileUploadService.validateImageFile(profileImage.file);
             // Delete old image if exists
             if (existingUser.profileImageUrl) {
               try {
@@ -326,7 +337,7 @@ const userResolvers = {
               }
             }
     
-            const imageUrl = await fileUploadService.uploadFile(profileImage, 'profile-images');
+            const imageUrl = await fileUploadService.uploadFile(profileImage.file, 'profile-images');
             updateData.profileImageUrl = imageUrl;
             logger.info('New profile image uploaded', {
               userId: user.id,
@@ -374,78 +385,105 @@ const userResolvers = {
       }
     }),
 
-    updateNotificationSettings: requireAuth(async (_, { input }, { user }) => {
+    updateNotificationSettings: requireAuth(async (_, { input }, { user, deviceId }) => {
       logger.info('Updating notification settings requested', { userId: user.id, input });
-    
+      const transaction = await sequelize.transaction();
       try {
-        const userRecord = await UserModel.findByPk(user.id);
-    
+        const userRecord = await UserModel.findByPk(user.id, { transaction });
         if (!userRecord) {
           logger.error('User not found during notification settings update', { userId: user.id });
-          throw new GraphQLError('User not found', {
+          throw new GraphQLError('Account not found. Please log in again.', {
             extensions: { code: 'NOT_FOUND'}
           });
         }
-    
-        const updateData = {};
-    
-        for (const key of Object.keys(input)) {
-          if (!ALLOWED_NOTIFICATION_FIELDS.includes(key)) {
-            logger.warn('Invalid field in input', { userId: user.id, key });
-            throw new GraphQLError(`Invalid field '${key}' in input`, {
-              extensions: { code: 'BAD_USER_INPUT' }
-            });
-          }
-    
-          if (input[key] !== undefined) {
-            updateData[key] = input[key];
-          }
-        }
-    
-        if (Object.keys(updateData).length === 0) {
-          logger.warn('No valid notification fields provided for update', { userId: user.id });
-          throw new GraphQLError('No valid fields provided for update', {
-            extensions: { code: 'BAD_USER_INPUT' }
+
+        // Validate push notification + fcmToken logic
+        if (input.pushNotifications === true && !input.fcmToken) {
+          logger.warn('Attempted to enable push notifications without providing an FCM token', { userId: user.id });
+          throw new GraphQLError('Please allow notifications on your device.', {
+            extensions: { code: 'FCM_TOKEN_REQUIRED' }
           });
         }
-    
-        await userRecord.update(updateData);
-    
+
+        // Prepare update data for user
+        const updateData = {};
+        if (typeof input.pushNotifications === 'boolean') updateData.pushNotificationsEnabled = input.pushNotifications;
+        if (typeof input.emailNotifications === 'boolean') updateData.emailNotificationsEnabled = input.emailNotifications;
+        if (typeof input.communityUpdates === 'boolean') updateData.communityUpdatesEnabled = input.communityUpdates;
+        if (typeof input.eventReminders === 'boolean') updateData.eventRemindersEnabled = input.eventReminders;
+
+        if (Object.keys(updateData).length === 0 && !input.fcmToken) {
+          logger.warn('No valid notification fields or FCM token provided for update', { userId: user.id });
+          throw new GraphQLError('Nothing to update.', {
+            extensions: { code: 'NO_FIELDS_TO_UPDATE' }
+          });
+        }
+
+        // Update user notification settings
+        if (Object.keys(updateData).length > 0) {
+          await userRecord.update(updateData, { transaction });
+        }
+
+        // Update fcmToken for current session if provided
+        if (input.fcmToken) {
+          const [updatedCount] = await AuthSession.update(
+            { fcmToken: input.fcmToken },
+            { where: { userId: user.id, deviceId }, transaction }
+          );
+          if (updatedCount === 0) {
+            logger.warn('No active session found to update FCM token', { userId: user.id, deviceId });
+            throw new GraphQLError('Could not update device token. Please try again.', {
+              extensions: { code: 'SESSION_NOT_FOUND' }
+            });
+          }
+        }
+
+        // If disabling push notifications, clear fcmToken for current session
+        if (input.pushNotifications === false) {
+          await AuthSession.update(
+            { fcmToken: null },
+            { where: { userId: user.id, deviceId }, transaction }
+          );
+        }
+
+        await transaction.commit();
+
+        // Prepare response
         const notificationSettings = {
-          pushNotificationsEnabled: userRecord.pushNotificationsEnabled,
-          emailNotificationsEnabled: userRecord.emailNotificationsEnabled,
-          communityUpdatesEnabled: userRecord.communityUpdatesEnabled,
-          eventRemindersEnabled: userRecord.eventRemindersEnabled
+          pushNotifications: userRecord.pushNotificationsEnabled,
+          emailNotifications: userRecord.emailNotificationsEnabled,
+          communityUpdates: userRecord.communityUpdatesEnabled,
+          eventReminders: userRecord.eventRemindersEnabled
         };
-    
+
         logger.info('Notification settings updated successfully', {
           userId: user.id,
           updatedFields: Object.keys(updateData)
         });
-    
+
         return {
           success: true,
           notificationSettings,
-          message: 'Notification settings updated'
+          message: 'Settings updated.'
         };
       } catch (error) {
+        await transaction.rollback();
         logger.error('Error updating notification settings', {
           userId: user.id,
           error: error.message,
           stack: error.stack
         });
         if(error instanceof GraphQLError) throw error
-        throw new GraphQLError('Failed to update notification settings', {
-          extensions: {
-            code: 'INTERNAL_SERVER_ERROR',
-          }
+        throw new GraphQLError('Could not update settings. Please try again.', {
+          extensions: { code: 'INTERNAL_SERVER_ERROR' }
         });
       }
     }),
 
     deleteAccount: requireAuth(async (_, { reason }, { user }) => {
+      const transaction = await sequelize.transaction();
       try {
-        const userRecord = await UserModel.findByPk(user.id);
+        const userRecord = await UserModel.findByPk(user.id, { transaction });
     
         if (!userRecord) {
           logger.error('User not found for deleteAccount', { userId: user.id });
@@ -467,9 +505,17 @@ const userResolvers = {
           isActive: false,
           deletedAt: scheduledDeletionDate,
           suspensionReason: reason || 'User requested account deletion'
-        });
+        }, { transaction });
     
-        logger.info('Account scheduled for deletion', {
+        // Expire all sessions for this user
+        await AuthSession.update(
+          { isActive: false },
+          { where: { userId: user.id }, transaction }
+        );
+    
+        await transaction.commit();
+    
+        logger.info('Account scheduled for deletion and sessions expired', {
           userId: user.id,
           reason: userRecord.suspensionReason,
           scheduledDeletionDate
@@ -481,6 +527,7 @@ const userResolvers = {
           scheduledDeletionDate
         };
       } catch (error) {
+        await transaction.rollback();
         logger.error('Error scheduling account deletion', {
           userId: user.id,
           error: error.message,
@@ -494,61 +541,6 @@ const userResolvers = {
         });
       }
     }),
-
-    cancelAccountDeletion: requireAuth(async (_, __, { user }) => {
-      if (!user) {
-        logger.warn('Unauthorized cancelAccountDeletion attempt');
-        throw new GraphQLError('Not authenticated', {
-          extensions: { code: 'UNAUTHENTICATED', http: { status: 401 } }
-        });
-      }
-    
-      try {
-        const userRecord = await UserModel.findByPk(user.id);
-    
-        if (!userRecord) {
-          logger.error('User not found during cancelAccountDeletion', { userId: user.id });
-          throw new GraphQLError('User not found', {
-            extensions: { code: 'NOT_FOUND', http: { status: 404 } }
-          });
-        }
-    
-        if (!userRecord.deletedAt) {
-          logger.warn('No scheduled deletion found to cancel', { userId: user.id });
-          throw new GraphQLError('No account deletion is scheduled', {
-            extensions: { code: 'BAD_REQUEST', http: { status: 400 } }
-          });
-        }
-    
-        await userRecord.update({
-          isActive: true,
-          deletedAt: null,
-          suspensionReason: null
-        });
-    
-        logger.info('Account deletion cancelled', { userId: user.id });
-    
-        return {
-          success: true,
-          message: 'Account deletion cancelled'
-        };
-      } catch (error) {
-        logger.error('Error cancelling account deletion', {
-          userId: user.id,
-          error: error.message,
-          stack: error.stack
-        });
-    
-        throw new GraphQLError('Failed to cancel account deletion', {
-          extensions: {
-            code: 'INTERNAL_SERVER_ERROR',
-            http: { status: 500 },
-            error: error.message
-          }
-        });
-      }
-    }),
-
   },
 
   User: {

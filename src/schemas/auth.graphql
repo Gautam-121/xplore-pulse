@@ -4,7 +4,6 @@
 type AuthTokens {
   accessToken: String!
   refreshToken: String!
-  expiresAt: DateTime!
 }
 
 # Active Sessions Types
@@ -37,10 +36,8 @@ input SendOTPInput {
 }
 
 enum OTPType {
-  SIGNUP
-  LOGIN
-  VERIFICATION
-  PASSWORD_RESET
+  PHONE_AUTH,
+  POST_GOOGLE_VERIFY
 }
 
 input VerifyOTPInput {
@@ -72,7 +69,6 @@ enum UserRole {
 type SendOTPResponse {
   success: Boolean!
   message: String!
-  otpExpiresAt: DateTime
   retryAfter: Int
 }
 

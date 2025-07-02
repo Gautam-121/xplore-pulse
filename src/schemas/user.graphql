@@ -54,6 +54,7 @@ input NotificationSettingsInput {
   emailNotifications: Boolean
   communityUpdates: Boolean
   eventReminders: Boolean
+  fcmToken:String
 }
 
 
@@ -122,7 +123,6 @@ extend type Mutation {
   updateNotificationSettings(input: NotificationSettingsInput!): UpdateNotificationSettingsResponse!
   # Account Management
   deleteAccount(reason: String): DeleteAccountResponse!
-  cancelAccountDeletion: GenericResponse!
 }
 
 # User Queries

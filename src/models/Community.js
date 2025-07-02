@@ -1,143 +1,124 @@
 module.exports = (sequelize, Sequelize) => {
     const Community = sequelize.define('Community', {
-      id: {
-        type: Sequelize.UUID,
-        defaultValue: Sequelize.UUIDV4,
-        primaryKey: true
-      },
-      name: {
-        type: Sequelize.STRING(100),
-        allowNull: false,
-        validate: { len: [3, 100] }
-      },
-      slug: {
-        type: Sequelize.STRING(100),
-        allowNull: false,
-        unique: true
-      },
-      description: {
-        type: Sequelize.TEXT,
-        allowNull: false,
-        validate: { len: [10, 1000] }
-      },
-      shortDescription: {
-        type: Sequelize.STRING(200),
-        validate: { len: [10, 200] }
-      },
-      coverImageUrl: {
-        type: Sequelize.TEXT,
-      },
-      logoUrl: {
-        type: Sequelize.TEXT,
-      },
-      // Monetization
-      type: {
-        type: Sequelize.ENUM('FREE', 'PAID'),
-        defaultValue: 'FREE'
-      },
-      isPaid: {
-        type: Sequelize.BOOLEAN,
-        defaultValue: false,
-      },
-      membershipFee: {
-        type: Sequelize.DECIMAL(10, 2),
-        defaultValue: 0.00,
-        validate: { min: 0 }
-      },
-      currency: {
-        type: Sequelize.STRING(3),
-        defaultValue: 'USD',
-        validate: { len: [3, 3] }
-      },
-      membershipType: {
-        type: Sequelize.ENUM('ONE_TIME', 'MONTHLY', 'YEARLY'),
-        defaultValue: 'ONE_TIME'
-      },
-      // Access & visibility
-      privacy: {
-        type: Sequelize.ENUM('PUBLIC', 'PRIVATE', 'SECRET'),
-        defaultValue: 'PUBLIC'
-      },
-      joinApproval: {
-        type: Sequelize.ENUM('AUTOMATIC', 'MANUAL', 'INVITE_ONLY'),
-        defaultValue: 'AUTOMATIC'
-      },
-      // Membership & creator
-      membersCount: {
-        type: Sequelize.INTEGER,
-        defaultValue: 0,
-      },
-      // State flags
-      isActive: {
-        type: Sequelize.BOOLEAN,
-        defaultValue: true,
-      },
-      isArchived: {
-        type: Sequelize.BOOLEAN,
-        defaultValue: false,
-      },
-      // Activity & cleanup
-      lastActivityAt: {
-        type: Sequelize.DATE,
-        defaultValue: Sequelize.NOW,
-      },
-      deletedAt: {
-        type: Sequelize.DATE,
-      }
-    }, {
-      paranoid: true,
-      hooks: {
-        beforeCreate: (community) => {
-          community.isPaid = community.membershipFee > 0;
-  
-          if (community.membershipFee > 0) {
-            community.type = community.membershipFee >= 50 ? 'PREMIUM' : 'PAID';
-          } else {
-            community.type = 'FREE';
-          }
+        id: {
+            type: Sequelize.UUID,
+            defaultValue: Sequelize.UUIDV4,
+            primaryKey: true
         },
-        beforeUpdate: (community) => {
-          if (community.changed('membershipFee')) {
-            community.isPaid = community.membershipFee > 0;
-  
-            if (community.membershipFee > 0) {
-              community.type = community.membershipFee >= 50 ? 'PREMIUM' : 'PAID';
-            } else {
-              community.type = 'FREE';
+        name: {
+            type: Sequelize.STRING,
+            allowNull: false
+        },
+        slug: {
+            type: Sequelize.STRING,
+            allowNull: false,
+            unique: true
+        },
+        description: {
+            type: Sequelize.TEXT,
+            allowNull: false
+        },
+        imageUrl: {
+            type: Sequelize.TEXT
+        },
+        coverImageUrl: {
+            type: Sequelize.TEXT
+        },
+        isPrivate: {
+            type: Sequelize.BOOLEAN,
+            defaultValue: false
+        },
+        isPaid: {
+            type: Sequelize.BOOLEAN,
+            defaultValue: false
+        },
+        price: {
+            type: Sequelize.DECIMAL(10, 2)
+        },
+        currency: {
+            type: Sequelize.STRING(3),
+            defaultValue: 'USD'
+        },
+        memberCount: {
+            type: Sequelize.INTEGER,
+            defaultValue: 0
+        },
+        postCount: {
+            type: Sequelize.INTEGER,
+            defaultValue: 0
+        },
+        eventCount: {
+            type: Sequelize.INTEGER,
+            defaultValue: 0
+        },
+        // Location as JSONB
+        location: {
+            type: Sequelize.JSONB,
+            defaultValue: {}
+        },
+        ownerId: {
+            type: Sequelize.UUID,
+            allowNull: false,
+            references: {
+                model: User,
+                key: 'id'
             }
-          }
-  
-          if (community.changed('membersCount')) {
-            community.lastActivityAt = new Date();
-          }
+        },
+        // Settings as JSONB
+        settings: {
+            type: Sequelize.JSONB,
+            defaultValue: {
+                allowMemberPosts: true,
+                allowMemberEvents: true,
+                requirePostApproval: false,
+                allowMemberInvites: true
+            }
+        },
+        // Stats as JSONB
+        stats: {
+            type: Sequelize.JSONB,
+            defaultValue: {
+                weeklyActiveMembers: 0,
+                monthlyActiveMembers: 0,
+                totalEngagement: 0
+            }
+        },
+        lastActivityAt: {
+            type: Sequelize.DATE,
+            defaultValue: Sequelize.NOW
         }
-      },
-      indexes: [
-        { fields: ['slug'] },
-        { fields: ['type', 'isActive'] },
-        { fields: ['privacy', 'isActive'] },
-        { fields: ['createdBy'] },
-        { fields: ['lastActivityAt'] }
-      ]
+    }, {
+        timestamps: true,
+        indexes: [
+            {
+                name: 'idx_community_location_gin',
+                using: 'gin',
+                fields: ['location']
+            },
+            {
+                fields: ['ownerId']
+            },
+            {
+                fields: ['isPrivate', 'isPaid']
+            },
+            {
+                fields: ['memberCount']
+            },
+            {
+                fields: ['lastActivityAt']
+            }
+        ]
     });
-  
-    Community.prototype.getPublicInfo = function () {
-      const fields = [
-        'id', 'name', 'slug', 'description', 'shortDescription',
-        'coverImageUrl', 'logoUrl',
-        'type', 'isPaid', 'membershipFee', 'currency', 'billingCycle',
-        'privacy', 'membersCount', 'createdBy',
-        'isActive', 'isArchived', 'createdAt', 'lastActivityAt'
-      ];
-  
-      const info = {};
-      fields.forEach(field => {
-        info[field] = this[field];
-      });
-  
-      return info;
-    };
-  
-    return Community;
-  };
-  
+    return Community
+};
+
+
+
+
+
+
+
+
+
+
+

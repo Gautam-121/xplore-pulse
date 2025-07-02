@@ -179,6 +179,7 @@ process.on('SIGINT', shutdown);
 
     await startServer();
   } catch (err) {
+    console.error('❌ Error starting server:', err);
     logger.error('Failed to start server', {err});
     process.exit(1);
   }

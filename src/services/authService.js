@@ -25,7 +25,7 @@ class AuthService {
           isActive: true,
           tokenExpiresAt: { [Op.gt]: new Date() }
         },
-        include: [{
+        include: [{//
           model: User,
           as: 'user',
           where: { isActive: true }

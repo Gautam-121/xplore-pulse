@@ -45,6 +45,27 @@ enum InterestCategory {
   PHOTOGRAPHY
 }
 
+input CreateInterestInput {
+  name: String!
+  slug: String!
+  description: String
+  iconUrl: String
+  colorHex: String
+  category: InterestCategory!
+  sortOrder: Int
+}
+
+type CreateInterestResponse {
+  success: Boolean!
+  message: String!
+}
+
+
+
 type Query {
   interests(query: String, category: InterestCategory, popular: Boolean, first: Int = 10, after: String): InterestConnection!
+}
+
+extend type Mutation {
+  createInterest(input: CreateInterestInput!): CreateInterestResponse!
 } 

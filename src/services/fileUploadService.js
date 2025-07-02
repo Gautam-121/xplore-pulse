@@ -3,9 +3,10 @@ const crypto = require('crypto');
 const path = require('path');
 const { GraphQLError } = require('graphql');
 const logger = require('../utils/logger');
-
 const SUBDIRECTORY = 'prompthkithustlebot';
+require('dotenv').config();
 
+console.log("process.env.ENDPOINT", process.env.ENDPOINT);
 class FileUploadService {
   constructor() {
     this.minioClient = new Minio.Client({
@@ -187,11 +188,10 @@ class FileUploadService {
       }
       
       // Remove leading slash if present
-      const objectKey = key.startsWith('/') ? key.slice(1) : key;
-      
+      const objectKey = key.replace(new RegExp(`^/?${this.bucketName}/`), '');      
       // Check if file exists before deletion
       try {
-        await this.minioClient.statObject(this.bucketName, objectKey);
+        await this.minioClient.statObject(this.bucketName , objectKey);
       } catch (error) {
         if (error.code === 'NotFound') {
           logger.warn('File not found for deletion', { fileUrl, objectKey });
