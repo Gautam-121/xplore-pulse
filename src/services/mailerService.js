@@ -74,10 +74,10 @@ class MailerService {
         html
       });
 
-      logger.info('MailerService: Email sent to %s (Message ID: %s)', {to, messageId:info.messageId});
+      logger.info('MailerService: Email sent to (Message ID)', {to, messageId:info.messageId});
       return { success: true, messageId: info.messageId };
     } catch (error) {
-      logger.error('MailerService: Failed to send email to %s: %o',{ to, error});
+      logger.error('MailerService: Failed to send email to',{ to, error});
       throw new GraphQLError('Failed to send email', { extensions: { code: 'EMAIL_SEND_FAILED' } });
     }
   }
@@ -93,10 +93,10 @@ class MailerService {
     const html = `<p>Your OTP code is: <b>${otp}</b></p>`;
 
     try {
-      logger.debug('MailerService: Sending OTP email to %s',{ to });
+      logger.debug('MailerService: Sending OTP email to',{ to });
       return await this.sendEmail({ to, subject, text, html });
     } catch (error) {
-      logger.error('MailerService: Error sending OTP email to %s: %o',{ to, error});
+      logger.error('MailerService: Error sending OTP email to',{ to, error});
       return { success: false, error: 'Email delivery failed' };
     }
   }

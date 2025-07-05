@@ -56,14 +56,14 @@ module.exports = (sequelize, Sequelize) => {
             type: Sequelize.JSONB,
             defaultValue: {}
         },
-        ownerId: {
-            type: Sequelize.UUID,
-            allowNull: false,
-            references: {
-                model: User,
-                key: 'id'
-            }
-        },
+        // ownerId: {
+        //     type: Sequelize.UUID,
+        //     allowNull: false,
+        //     references: {
+        //         model: User,
+        //         key: 'id'
+        //     }
+        // },
         // Settings as JSONB
         settings: {
             type: Sequelize.JSONB,

@@ -1,0 +1,351 @@
+type Community {
+    id: ID!
+    name: String!
+    slug: String!  # Add missing slug field
+    description: String!
+    imageUrl: String
+    coverImageUrl: String
+    isPrivate: Boolean!
+    isPaid: Boolean!
+    price: Float
+    currency: String
+    memberCount: Int!
+    postCount: Int!
+    eventCount: Int!
+    location: Location
+    interests: [Interest!]!
+    owner: User!
+    admins: [User!]!
+    moderators: [User!]!
+    membershipStatus: MembershipStatus
+    isOwner: Boolean!
+    isAdmin: Boolean!
+    isModerator: Boolean!
+    canPost: Boolean!
+    canCreateEvents: Boolean!
+    createdAt: Date!
+    updatedAt: Date!
+  }
+
+  enum MembershipStatus {
+    NOT_MEMBER
+    PENDING
+    MEMBER
+    REJECTED
+    BANNED
+  }
+
+  enum MemberRole {
+    OWNER
+    ADMIN
+    MODERATOR
+    MEMBER
+  }
+
+  enum MemberRequestStatus {
+    PENDING
+    APPROVED
+    REJECTED
+  }
+
+  type CommunityMember {
+    id: ID!
+    user: User!
+    community: Community!
+    role: MemberRole!
+    status: MemberRequestStatus!
+    joinedAt: Date
+    requestedAt: Date!
+  }
+
+  type CommunityPost {
+    id: ID!
+    type: PostType!
+    title: String!
+    content: String
+    imageUrls: [String]
+    videoUrl: String
+    linkUrl: String
+    linkTitle: String
+    linkDescription: String
+    linkImageUrl: String
+    isPaid: Boolean!
+    price: Float
+    currency: String
+    author: User!
+    community: Community!
+    likesCount: Int!
+    commentsCount: Int!
+    sharesCount: Int!
+    isLiked: Boolean!
+    isBookmarked: Boolean!
+    eventDetails: EventDetails
+    tags: [String]
+    createdAt: Date!
+    updatedAt: Date!
+  }
+
+  enum PostType {
+    TEXT
+    IMAGE
+    VIDEO
+    LINK
+    EVENT
+    EDUCATIONAL
+    POLL
+  }
+
+  type EventDetails {
+    startDate: Date!
+    endDate: Date
+    eventType: EventType!
+    location: Location
+    onlineLink: String
+    registrationRequired: Boolean!
+    maxAttendees: Int
+    registrationCount: Int!
+    registrationDeadline: Date
+    isRegistered: Boolean!
+    ticketPrice: Float
+    currency: String
+    agenda: String
+    requirements: String
+  }
+
+  enum EventType {
+    OFFLINE
+    ONLINE
+    HYBRID
+  }
+
+  type PaginationInfo {
+    hasNextPage: Boolean!
+    hasPreviousPage: Boolean!
+    totalCount: Int!
+    cursor: String
+  }
+
+  type CommunitiesConnection {
+    edges: [CommunityEdge!]!
+    pageInfo: PaginationInfo!
+  }
+
+  type CommunityEdge {
+    node: Community!
+    cursor: String!
+  }
+
+  type CommunityMembersConnection {
+    edges: [CommunityMemberEdge!]!
+    pageInfo: PaginationInfo!
+  }
+
+  type CommunityMemberEdge {
+    node: CommunityMember!
+    cursor: String!
+  }
+
+  type CommunityWallConnection {
+    edges: [CommunityPostEdge!]!
+    pageInfo: PaginationInfo!
+  }
+
+  type CommunityPostEdge {
+    node: CommunityPost!
+    cursor: String!
+  }
+
+  input CommunityFilters {
+    interests: [ID!]
+    location: LocationInput
+    radius: Float
+    isPaid: Boolean
+    isPrivate: Boolean
+    memberCountMin: Int
+    memberCountMax: Int
+    sortBy: CommunitySortBy
+    sortOrder: SortOrder
+  }
+
+  input LocationInput {
+    latitude: Float!
+    longitude: Float!
+    address: String
+    city: String
+    state: String
+    country: String
+    zipCode: String
+  }
+
+  enum CommunitySortBy {
+    CREATED_AT
+    MEMBER_COUNT
+    ACTIVITY
+    DISTANCE
+    RELEVANCE
+  }
+
+  enum SortOrder {
+    ASC
+    DESC
+  }
+
+  input CreateCommunityInput {
+    name: String!
+    description: String!
+    imageUrl: Upload
+    coverImageUrl: Upload
+    isPrivate: Boolean! = false
+    isPaid: Boolean! = false
+    price: Float
+    currency: String = "USD"
+    location: LocationInput
+    interests: [ID!]!
+  }
+
+  input UpdateCommunityInput {
+    name: String
+    description: String
+    imageUrl: String
+    coverImageUrl: String
+    isPrivate: Boolean
+    isPaid: Boolean
+    price: Float
+    currency: String
+    location: LocationInput
+    interests: [ID!]
+  }
+
+  input CreateCommunityPostInput {
+    communityId: ID!
+    type: PostType!
+    title: String!
+    content: String
+    imageUrls: [String]
+    videoUrl: String
+    linkUrl: String
+    isPaid: Boolean! = false
+    price: Float
+    currency: String = "USD"
+    eventDetails: EventDetailsInput
+    tags: [String]
+  }
+
+  input EventDetailsInput {
+    startDate: Date!
+    endDate: Date
+    eventType: EventType!
+    location: LocationInput
+    onlineLink: String
+    registrationRequired: Boolean! = false
+    maxAttendees: Int
+    registrationDeadline: Date
+    ticketPrice: Float
+    currency: String = "USD"
+    agenda: String
+    requirements: String
+  }
+
+  type Query {
+    # Community Discovery
+    discoverCommunities(
+      first: Int = 20
+      after: String
+      filters: CommunityFilters
+    ): CommunitiesConnection!
+
+    searchCommunities(
+      query: String!
+      first: Int = 20
+      after: String
+      filters: CommunityFilters
+    ): CommunitiesConnection!
+
+    # My Communities
+    myJoinedCommunities(
+      first: Int = 20
+      after: String
+    ): CommunitiesConnection!
+
+    myOwnedCommunities(
+      first: Int = 20
+      after: String
+    ): CommunitiesConnection!
+
+    # Community Details
+    community(id: ID!): Community
+    communityBySlug(slug: String!): Community
+
+    # Community Members
+    communityMembers(
+      communityId: ID!
+      first: Int = 20
+      after: String
+      role: MemberRole
+      status: MemberRequestStatus
+    ): CommunityMembersConnection!
+
+    # Pending Member Requests (for owners/admins)
+    pendingMemberRequests(
+      communityId: ID!
+      first: Int = 20
+      after: String
+    ): CommunityMembersConnection!
+
+    # Community Wall
+    communityWall(
+      communityId: ID!
+      first: Int = 20
+      after: String
+      postType: PostType
+    ): CommunityWallConnection!
+
+    # Trending Communities
+    trendingCommunities(
+      first: Int = 10
+      timeframe: String = "week"
+    ): [Community!]!
+
+    # Recommended Communities
+    recommendedCommunities(
+      first: Int = 10
+    ): [Community!]!
+  }
+
+  type Mutation {
+    # Community Management
+    createCommunity(input: CreateCommunityInput!): Community!
+    updateCommunity(id: ID!, input: UpdateCommunityInput!): Community!
+    deleteCommunity(id: ID!): Boolean!
+
+    # Community Membership
+    joinCommunity(communityId: ID!): Boolean!
+    leaveCommunity(communityId: ID!): Boolean!
+    
+    # Member Request Management (for private communities)
+    approveMemberRequest(communityId: ID!, userId: ID!): Boolean!
+    rejectMemberRequest(communityId: ID!, userId: ID!): Boolean!
+    
+    # Member Role Management
+    assignMemberRole(communityId: ID!, userId: ID!, role: MemberRole!): Boolean!
+    removeMemberRole(communityId: ID!, userId: ID!): Boolean!
+    
+    # Ban/Unban Members
+    banMember(communityId: ID!, userId: ID!, reason: String): Boolean!
+    unbanMember(communityId: ID!, userId: ID!): Boolean!
+
+    # Community Posts
+    createCommunityPost(input: CreateCommunityPostInput!): CommunityPost!
+    updateCommunityPost(id: ID!, input: CreateCommunityPostInput!): CommunityPost!
+    deleteCommunityPost(id: ID!): Boolean!
+
+    # Post Interactions
+    likeCommunityPost(postId: ID!): Boolean!
+    unlikeCommunityPost(postId: ID!): Boolean!
+    bookmarkCommunityPost(postId: ID!): Boolean!
+    unbookmarkCommunityPost(postId: ID!): Boolean!
+
+    # Event Registration
+    registerForEvent(postId: ID!): Boolean!
+    unregisterFromEvent(postId: ID!): Boolean!
+  }

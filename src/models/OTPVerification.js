@@ -7,11 +7,11 @@ module.exports = (sequelize, Sequelize) => {
         },
         phoneNumber: {
           type: Sequelize.STRING(20),
-          allowNull: false,
+          allowNull: true,
         },
         countryCode: {
           type: Sequelize.STRING(5),
-          allowNull: false,
+          allowNull: true,
         },
         // OTP details - keeping for backward compatibility and fallback
         otpCode: {
@@ -23,7 +23,7 @@ module.exports = (sequelize, Sequelize) => {
           allowNull: true, // Made nullable since we're using Kaleyra verification
         },
         otpType: {
-          type: Sequelize.ENUM('PHONE_AUTH','POST_GOOGLE_VERIFY'),
+          type: Sequelize.ENUM('PHONE_AUTH','POST_GOOGLE_VERIFY','EMAIL_VERIFY'),
           allowNull: false,
         },
         // Kaleyra specific fields
@@ -74,7 +74,15 @@ module.exports = (sequelize, Sequelize) => {
         providerStatus: {
           type: Sequelize.STRING(50), // Store status from Kaleyra (e.g., 'pending', 'approved', 'failed')
           allowNull: true
-        }
+        },
+        email: {
+          type: Sequelize.STRING(255),
+          allowNull: true,
+        },
+        otpSalt: {
+          type: Sequelize.STRING(64),
+          allowNull: true,
+        },
       }, {
         indexes: [
           {

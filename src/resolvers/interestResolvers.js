@@ -28,7 +28,7 @@ const interestResolvers = {
         });
         if (result.edges.length === 0) {
           logger.warn('No interests found for filters', { query, category, popular });
-          throw new GraphQLError('No interests found for the specified filters', {
+          throw new GraphQLError('No interests found', {
             extensions: { code: 'NO_RESULTS' }
           });
         }
@@ -36,7 +36,7 @@ const interestResolvers = {
         return result;
       } catch (error) {
         logger.error('Error fetching interests', { error: error.message });
-        if(error instanceof GraphQLError) throw error;
+        if (error instanceof GraphQLError) throw error;
         throw new GraphQLError('Failed to fetch interests', {
           extensions: { code: 'INTERNAL_SERVER_ERROR' }
         });
@@ -68,7 +68,7 @@ const interestResolvers = {
         where: {
           [Op.or]: [
             { name: name.trim()?.toLowerCase() },
-            { slug: slug.trim()?.toLowerCase()}
+            { slug: slug.trim()?.toLowerCase() }
           ]
         }
       });
@@ -123,7 +123,7 @@ const interestResolvers = {
             extensions: { code: 'BAD_USER_INPUT' }
           });
         }
-        if(error instanceof GraphQLError) throw error
+        if (error instanceof GraphQLError) throw error
         throw new GraphQLError('Failed to create interest.', {
           extensions: { code: 'INTERNAL_SERVER_ERROR' }
         });

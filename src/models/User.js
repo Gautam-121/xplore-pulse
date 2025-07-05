@@ -38,7 +38,11 @@ module.exports = (sequelize, Sequelize) => {
         profileImageUrl: {
           type: Sequelize.TEXT,
         },
-        isVerified: {
+        isPhoneVerified: {
+          type: Sequelize.BOOLEAN,
+          defaultValue: false,
+        },
+        isEmailVerified: {
           type: Sequelize.BOOLEAN,
           defaultValue: false,
         },
@@ -127,7 +131,7 @@ module.exports = (sequelize, Sequelize) => {
             where: { isActive: true }
           },
           verified: {
-            where: { isVerified: true }
+            where: { isPhoneVerified: true }
           }
         }
       });
@@ -138,7 +142,7 @@ module.exports = (sequelize, Sequelize) => {
       };
     
       User.prototype.getPublicProfile = function() {
-        const publicFields = ['id', 'name', 'bio', 'profileImageUrl', 'isVerified', 'followersCount', 'followingCount', 'createdAt', 'role'];
+        const publicFields = ['id', 'name', 'bio', 'profileImageUrl', 'isPhoneVerified', 'isEmailVerified', 'followersCount', 'followingCount', 'createdAt', 'role'];
         const profile = {};
         publicFields.forEach(field => {
           profile[field] = this[field];

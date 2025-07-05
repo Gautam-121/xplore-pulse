@@ -8,6 +8,18 @@ const UserInterestModel = db.UserInterest
 const sequelize = db.sequelize
 const fileUploadService = require("../services/fileUploadService")
 const { requireAuth } = require('../middleware/auth');
+const crypto = require("crypto")
+const { Op } = require("sequelize")
+const { sendEmailOTP, verifyEmailOTP } = require('../services/emailVerificationService');
+const smsService = require('../services/kaleraSmsService');
+
+
+function hashOTP(otp, salt = null) {
+  salt = salt || crypto.randomBytes(16).toString('hex');
+  const hash = crypto.createHmac('sha256', salt).update(otp).digest('hex');
+  return { hash, salt };
+}
+
 
 const userResolvers = {
   Query: {
@@ -40,58 +52,76 @@ const userResolvers = {
   },
 
   Mutation: {
-    completeProfileSetup: requireAuth(async (_, { input }, { user }) => {
+    completeProfileSetup: requireAuth(async (_, { input }, { user, ipAddress, userAgent }) => {
       const transaction = await sequelize.transaction();
       let uploadedFileUrl = null;
       try {
-        const { name, bio, profileImage } = input;
-        logger.info('Starting profile setup', { userId: user.id });  
-        const updateData = { name , bio };
+        const { name, bio, profileImage, email } = input;
+        logger.info('Starting profile setup', { userId: user.id });
+
+        // Email uniqueness check
+        if (email) {
+          const existing = await UserModel.findOne({ where: { email }, transaction });
+          if (existing && existing.id !== user.id) {
+            throw new GraphQLError('Email already in use in another account', {
+              extensions: { code: 'EMAIL_IN_USE' }
+            });
+          }
+        }
+
+        const updateData = { name, bio };
+        if (email) updateData.email = email;
+
+        // Profile image logic (as before)
         if (profileImage) {
-          // Validate image
-          fileUploadService.validateImageFile(profileImage.file)
+          fileUploadService.validateImageFile(profileImage.file);
           try {
-            const fileUrl = await fileUploadService.uploadFile(profileImage.file, 'prompthkithustlebot');
+            const fileUrl = await fileUploadService.uploadFile(profileImage.file, 'profile-images');
             updateData.profileImageUrl = fileUrl;
             uploadedFileUrl = fileUrl;
             logger.info('Profile image uploaded', { userId: user.id });
           } catch (error) {
-            logger.error('Profile image upload failed', {
-              userId: user.id,
-              error: error.message
-            });
+            logger.error('Profile image upload failed', { userId: user.id, error: error.message });
             throw new GraphQLError('Failed to upload profile image', {
-              extensions: { code: 'BAD_USER_INPUT', argumentName: 'profileImage' }
+              extensions: { code: 'BAD_USER_INPUT' }
             });
           }
         }
-    
+
         const userRecord = await UserModel.findByPk(user.id, { transaction });
         if (!userRecord) {
           throw new GraphQLError('User not found', {
             extensions: { code: 'USER_NOT_FOUND' }
           });
         }
-    
+
+        // If email provided, do not advance onboarding step until verified
         await userRecord.update({
           ...updateData,
           isProfileComplete: true,
-          onboardingStep: 'INTERESTS_SELECTION'
+          onboardingStep: email ? 'PROFILE_SETUP' : 'INTERESTS_SELECTION',
         }, { transaction });
-    
+
+        // If email provided, send OTP
+        if (email) {
+          await sendEmailOTP(user.id, email, ipAddress, userAgent);
+          logger.info('Sent email verification OTP', { userId: user.id, email });
+        }
+
         await transaction.commit();
-    
+
         logger.info('Profile setup completed', { userId: user.id });
-    
+
         return {
           success: true,
           user: userRecord,
-          message: 'Profile setup completed'
+          message: email
+            ? 'Profile setup completed. Please verify your email.'
+            : 'Profile setup completed'
         };
-    
+
       } catch (error) {
         await transaction.rollback();
-        // 🧹 Cleanup file only if uploaded and DB failed
         if (uploadedFileUrl) {
           try {
             await fileUploadService.deleteFile(uploadedFileUrl);
@@ -102,13 +132,606 @@ const userResolvers = {
             });
           }
         }
-        logger.error('Profile setup failed', {
+        console.log("error", error)
+        logger.error('Profile setup failed', { userId: user.id, error: error.message });
+        if (error instanceof GraphQLError) throw error;
+        throw new GraphQLError('Profile completion failed', {
+          extensions: { code: 'PROFILE_SETUP_FAILED' }
+        });
+      }
+    }),
+
+    // Step 1: Request email change (sends OTP)
+    requestEmailUpdate: requireAuth(async (_, { email }, { user, req }) => {
+      logger.info('Starting email update request', { userId: user.id, email });
+      try {
+        const existingUser = await UserModel.findByPk(user.id);
+        
+        if (!existingUser) {
+          throw new GraphQLError('User not found', {
+            extensions: { code: 'NOT_FOUND' }
+          });
+        }
+
+        if (existingUser.onboardingStep !== "COMPLETED") {
+          throw new GraphQLError("Please complete the onboarding step", {
+            extensions: { code: "ONBOARDING_NOT_COMPLETED" }
+          });
+        }
+
+        // Use the existing sendEmailOTP service which handles all validations
+        const result = await sendEmailOTP(
+          user.id, 
+          email, 
+          req.ip, 
+          req.get('User-Agent')
+        );
+
+        logger.info('Email update OTP sent successfully', {
+          userId: user.id,
+          email: email.replace(/(.{2})(.*)(@.*)/, '$1****$3') // Mask email for logs
+        });
+
+        return {
+          success: true,
+          message: result.message || 'OTP sent to your email. Please verify to update your email address.',
+          retryAfter: result.retryAfter
+        };
+      } catch (error) {
+        logger.error('Error in email update request', {
+          userId: user.id,
+          email: email.replace(/(.{2})(.*)(@.*)/, '$1****$3'),
+          error: error.message,
+          code: error.extensions?.code
+        });
+        
+        // Re-throw GraphQLError as-is, wrap others
+        if (error instanceof GraphQLError) throw error;
+        throw new GraphQLError('Failed to send email verification', {
+          extensions: { code: 'INTERNAL_SERVER_ERROR' }
+        });
+      }
+    }),
+
+    // Step 2: Verify email OTP and update email
+    verifyAndUpdateEmail: requireAuth(async (_, { email, otp }, { user }) => {
+      logger.info('Starting email verification and update', { userId: user.id, email: email.replace(/(.{2})(.*)(@.*)/, '$1****$3') });
+      const transaction = await sequelize.transaction();
+      try {
+        // Find the most recent unverified OTP for this user and email
+        const otpVerification = await db.OtpVerification.findOne({
+          where: {
+            userId: user.id,
+            email: email,
+            otpType: 'EMAIL_VERIFY',
+            isVerified: false
+          },
+          order: [['createdAt', 'DESC']],
+          transaction
+        });
+        
+        if (!otpVerification) {
+          throw new GraphQLError('No pending verification found for this email', {
+            extensions: { code: 'NO_PENDING_VERIFICATION' }
+          });
+        }
+
+        console.log("otpVer" , otpVerification)
+
+        if (otpVerification.expiresAt < new Date()) {
+          throw new GraphQLError('OTP has expired', {
+            extensions: { code: 'OTP_EXPIRED' }
+          });
+        }
+
+        if ((otpVerification.verificationAttempts + 1) >= otpVerification.maxAttempts) {
+          throw new GraphQLError('Maximum verification attempts exceeded', {
+            extensions: { code: 'MAX_ATTEMPTS_EXCEEDED' }
+          });
+        }
+
+        // Verify OTP
+        const { hash:hashedOTP } = hashOTP(otp, otpVerification.otpSalt);
+        if (hashedOTP !== otpVerification.otpHash) {
+          // Increment attempts
+          await otpVerification.update({
+            verificationAttempts: otpVerification.verificationAttempts + 1
+          });
+          const remainingAttempts = otpVerification.maxAttempts - (otpVerification.verificationAttempts);
+          console.log("Error" , otpVerification.verificationAttempts)
+          throw new GraphQLError(`Invalid OTP. ${remainingAttempts} attempts remaining.`, {
+            extensions: { 
+              code: 'INVALID_OTP',
+              remainingAttempts
+            }
+          });
+        }
+
+        // Double-check email is still not in use by another user
+        const emailExists = await UserModel.findOne({
+          where: { 
+            email: email,
+            id: { [Op.ne]: user.id }
+          },
+          transaction
+        });
+        
+        if (emailExists) {
+          throw new GraphQLError('Email already in use by another account', {
+            extensions: { code: 'EMAIL_IN_USE' }
+          });
+        }
+
+        // Update user email
+        const existingUser = await UserModel.findByPk(user.id, { transaction });
+        const previousEmail = existingUser.email;
+        
+        await existingUser.update({
+          email: email,
+          ...(existingUser.googleId && { googleId: null}),
+          isEmailVerified: true
+        }, { transaction });
+
+        // Mark OTP as verified
+        await otpVerification.update({
+          isVerified: true,
+          verifiedAt: new Date()
+        }, { transaction });
+
+        // Clean up any other pending email verifications for this user
+        await db.OtpVerification.update({
+          isVerified: false,
+          verifiedAt: new Date()
+        }, {
+          where: {
+            userId: user.id,
+            otpType: 'EMAIL_VERIFY',
+            isVerified: false,
+            id: { [Op.ne]: otpVerification.id }
+          },
+          transaction
+        });
+
+        await transaction.commit();
+
+        logger.info('Email updated successfully', {
+          userId: user.id,
+          previousEmail: previousEmail?.replace(/(.{2})(.*)(@.*)/, '$1****$3'),
+          newEmail: email.replace(/(.{2})(.*)(@.*)/, '$1****$3')
+        });
+
+        return {
+          success: true,
+          user: existingUser,
+          message: 'Email updated successfully'
+        };
+      } catch (error) {
+        await transaction.rollback();
+        logger.error('Error in email verification and update', {
+          userId: user.id,
+          email: email.replace(/(.{2})(.*)(@.*)/, '$1****$3'),
+          error: error.message,
+          code: error.extensions?.code
+        });
+        
+        if (error instanceof GraphQLError) throw error;
+        throw new GraphQLError('Failed to verify and update email', {
+          extensions: { code: 'INTERNAL_SERVER_ERROR' }
+        });
+      }
+    }),
+
+    // Step 1: Request phone change (sends OTP)
+    requestPhoneUpdate: requireAuth(async (_, { phoneNumber, countryCode }, { user, ipAddress,userAgent, req }) => {
+      logger.info('Starting phone update request', { userId: user.id, phoneNumber, countryCode });
+      
+      const transaction = await sequelize.transaction();
+      
+      try {
+        const existingUser = await UserModel.findByPk(user.id, { transaction });
+        
+        if (!existingUser) {
+          throw new GraphQLError('User not found', {
+            extensions: { code: 'NOT_FOUND' }
+          });
+        }
+
+        if (existingUser.onboardingStep !== "COMPLETED") {
+          throw new GraphQLError("Please complete the onboarding step", {
+            extensions: { code: "ONBOARDING_NOT_COMPLETED" }
+          });
+        }
+
+        // Check if phone is already in use
+        const phoneExists = await UserModel.findOne({
+          where: { phoneNumber, countryCode },
+          transaction
+        });
+        
+        if (phoneExists && phoneExists.id !== user.id) {
+          throw new GraphQLError('Phone number already in use by another account', {
+            extensions: { code: 'PHONE_IN_USE' }
+          });
+        }
+
+        if(phoneExists && phoneExists.countryCode === countryCode && phoneExists.phone === phoneNumber){
+          throw new GraphQLError("Phone is already verified", {
+            extensions: { code : "PHONE_VERIFIED"}
+          })
+        }
+
+         // 2. Rate limiting: max 5 OTPs per hour per phone+type
+      const oneHourAgo = Date.now() - 60 * 60 * 1000
+      const recentOTPs = await db.OtpVerification.count({
+        where: {
+          phoneNumber,
+          countryCode,
+          otpType: 'PHONE_AUTH',
+          createdAt: { [Op.gte]: oneHourAgo }
+        }
+      });
+      if (recentOTPs >= 5) {
+        logger.warn('OTP rate limit exceeded', { phoneNumber, countryCode, type });
+        throw new GraphQLError('Too many OTP requests. Please try again later.', {
+          extensions: { code: 'OTP_RATE_LIMIT_EXCEEDED' }
+        });
+      }
+
+      // 3. Prevent spamming: min 30s between requests
+      const lastOTP = await db.OtpVerification.findOne({
+        where: { phoneNumber, countryCode, otpType: 'PHONE_AUTH' },
+        order: [['createdAt', 'DESC']]
+      });
+      if (lastOTP && Date.now() - lastOTP.createdAt.getTime() < 30 * 1000) {
+        throw new GraphQLError('Please wait before requesting another OTP.', {
+          extensions: { code: 'OTP_TOO_SOON' }
+        });
+      }
+
+
+        // Send OTP via Kaleyra (this should set the verifyId)
+        const kaleyraSMSResult = await smsService.sendOTPSMS(phoneNumber, countryCode);
+
+        if (!kaleyraSMSResult.success || !kaleyraSMSResult.verifyId) {
+          throw new GraphQLError('Failed to initiate OTP with provider', {
+            extensions: { code: 'OTP_PROVIDER_FAILED' }
+          });
+        }
+
+        // 5. Expiry: 10 minutes
+        const expiresAt = Date.now() + 10 * 60 * 1000
+        
+        // 6. Store OTP record
+        await db.OtpVerification.create({
+          phoneNumber,
+          countryCode,
+          otpType: "PHONE_AUTH",
+          verifyId: kaleyraSMSResult.verifyId,
+          provider: 'KALEYRA',
+          expiresAt,
+          ipAddress,
+          userAgent,
+          providerResponse: {
+            messageId: kaleyraSMSResult.messageId,
+            status: kaleyraSMSResult.status,
+            sentAt: new Date()
+          },
+          providerStatus: kaleyraSMSResult.status || 'pending',
+          verificationAttempts: 0,
+          maxAttempts: 5 // Set max attempts per OTP
+        }, { transaction });
+
+        await transaction.commit();
+
+        logger.info('Phone update OTP sent successfully', {
+          userId: user.id,
+          phoneNumber,
+          countryCode,
+        });
+
+        return {
+          success: true,
+          message: 'OTP sent to your phone. Please verify to update your phone number.',
+          retryAfter: 30
+        };
+      } catch (error) {
+        await transaction.rollback();
+        logger.error('Error in phone update request', {
+          userId: user.id,
+          phoneNumber,
+          countryCode,
+          error: error.message
+        });
+        if (error instanceof GraphQLError) throw error;
+        throw new GraphQLError('Failed to send phone verification', {
+          extensions: { code: 'INTERNAL_SERVER_ERROR' }
+        });
+      }
+    }),
+
+    // Step 2: Verify phone OTP and update phone
+    verifyAndUpdatePhone: requireAuth(async (_, { phoneNumber, countryCode, otp }, { user }) => {
+      logger.info('Starting phone verification and update', { userId: user.id, phoneNumber , countryCode });
+      
+      const transaction = await sequelize.transaction();
+      
+      try {
+        // 1. Find latest, unexpired, unverified OTP
+        const otpRecord = await db.OtpVerification.findOne({
+          where: {
+            phoneNumber,
+            countryCode,
+            otpType: "PHONE_AUTH",
+            isVerified: false,
+            provider: 'KALEYRA',
+          },
+          order: [['createdAt', 'DESC']],
+          lock: transaction.LOCK.UPDATE,
+          transaction
+        });
+    
+        if (!otpRecord || !otpRecord.verifyId) {
+          logger.warn('No valid OTP record found', { phoneNumber, countryCode, type });
+          throw new GraphQLError('No pending verification found for this PHONE', {
+            extensions: { code: 'INVALID_OTP_SESSION' }
+          });
+        }
+
+        if (otpRecord.expiresAt < new Date()) {
+          throw new GraphQLError('OTP has expired', {
+            extensions: { code: 'OTP_EXPIRED' }
+          });
+        }
+    
+        // 2. Attempt limit
+        if ((otpRecord.verificationAttempts + 1) >= otpRecord.maxAttempts) {
+          logger.warn('Local OTP verification attempts exceeded', { phoneNumber });
+          throw new GraphQLError('Maximum verification attempts exceeded', {
+            extensions: { code: 'OTP_ATTEMPTS_EXCEEDED' }
+          });
+        }
+
+         // 3. Verify OTP with KaleyraverifyAndUpdatePhone: requireAuth(async (_, { phoneNumber, countryCode, otp }, { user }) => {
+      logger.info('Starting phone verification and update', { userId: user.id, phoneNumber , countryCode });
+      
+      const transaction = await sequelize.transaction();
+      
+      try {
+        // 1. Find latest, unexpired, unverified OTP
+        const otpRecord = await db.OtpVerification.findOne({
+          where: {
+            phoneNumber,
+            countryCode,
+            otpType: "PHONE_AUTH",
+            isVerified: false,
+            provider: 'KALEYRA',
+          },
+          order: [['createdAt', 'DESC']],
+          lock: transaction.LOCK.UPDATE,
+          transaction
+        });
+    
+        if (!otpRecord || !otpRecord.verifyId) {
+          logger.warn('No valid OTP record found', { phoneNumber, countryCode, type });
+          throw new GraphQLError('No pending verification found for this PHONE', {
+            extensions: { code: 'INVALID_OTP_SESSION' }
+          });
+        }
+
+        if (otpRecord.expiresAt < new Date()) {
+          throw new GraphQLError('OTP has expired', {
+            extensions: { code: 'OTP_EXPIRED' }
+          });
+        }
+    
+        // 2. Attempt limit
+        if ((otpRecord.verificationAttempts + 1) >= otpRecord.maxAttempts) {
+          logger.warn('Local OTP verification attempts exceeded', { phoneNumber });
+          throw new GraphQLError('Maximum verification attempts exceeded', {
+            extensions: { code: 'OTP_ATTEMPTS_EXCEEDED' }
+          });
+        }
+
+         // 3. Verify OTP with Kaleyra
+         let kaleyraVerifyResult;
+         try {
+           kaleyraVerifyResult = await smsService.verifyOTP(otpRecord.verifyId, otp);
+         } catch (kaleyraError) {
+           await otpRecord.increment('verificationAttempts', { transaction });
+           throw kaleyraError;
+         }
+
+         console.log("KaleraResult", kaleyraVerifyResult)
+        
+        if (!kaleyraVerifyResult.success || !kaleyraVerifyResult.isValid) {
+          // Increment attempts
+          await db.OtpVerification.update({
+            providerStatus: kaleyraVerifyResult.status || 'failed',
+            providerResponse: {
+              ...otpRecord.providerResponse,
+              lastVerifyAttempt: {
+                result: kaleyraVerifyResult,
+                attemptedAt: new Date()
+              }
+            },
+            verificationAttempts: otpRecord.verificationAttempts + 1
+          }, { transaction });
+
+          logger.warn('OTP verification failed with Kaleyra', {
+            phoneNumber,
+            status: kaleyraVerifyResult.status
+          });
+          
+          throw new GraphQLError(kaleyraVerifyResult.message || 'Invalid OTP', {
+            extensions: { code: 'INVALID_OTP' }
+          });
+        }
+
+        // Update user phone
+        const existingUser = await UserModel.findByPk(user.id, { transaction });
+        await existingUser.update({
+          phoneNumber: otpRecord.phoneNumber,
+          countryCode: otpRecord.countryCode,
+          isPhoneVerified: true
+        }, { transaction });
+
+        // Mark OTP as verified
+        await db.OtpVerification.update({
+          isVerified: true,
+          verifiedAt: new Date(),
+          providerResponse: kaleyraVerifyResult.status || 'approved',
+          providerResponse: {
+            ...otpRecord.providerResponse,
+            verificationResult: {
+              result: kaleyraVerifyResult,
+              verifiedAt: new Date()
+            }
+          }
+        }, { transaction });
+
+        await transaction.commit();
+
+        logger.info('Phone updated successfully', {
+          userId: user.id,
+          newPhone: otpRecord.phoneNumber,
+          countryCode: otpRecord.countryCode
+        });
+
+        return {
+          success: true,
+          user: existingUser,
+          message: 'Phone number updated successfully'
+        };
+      } catch (error) {
+        await transaction.rollback();
+        logger.error('Error in phone verification and update', {
           userId: user.id,
           error: error.message
         });
-        if(error instanceof GraphQLError) throw error
-        throw new GraphQLError('Profile completion failed', {
-          extensions: { code: 'PROFILE_SETUP_FAILED' }
+        if (error instanceof GraphQLError) throw error;
+        throw new GraphQLError('Failed to verify and update phone', {
+          extensions: { code: 'INTERNAL_SERVER_ERROR' }
+        });
+      }
+    })
+         let kaleyraVerifyResult;
+         try {
+           kaleyraVerifyResult = await smsService.verifyOTP(otpRecord.verifyId, otp);
+         } catch (kaleyraError) {
+           await otpRecord.increment('verificationAttempts', { transaction });
+           throw kaleyraError;
+         }
+
+         console.log("KaleraResult", kaleyraVerifyResult)
+        
+        if (!kaleyraVerifyResult.success || !kaleyraVerifyResult.isValid) {
+          // Increment attempts
+          await otpRecord.update({
+            providerStatus: kaleyraVerifyResult.status || 'failed',
+            providerResponse: {
+              ...otpRecord.providerResponse,
+              lastVerifyAttempt: {
+                result: kaleyraVerifyResult,
+                attemptedAt: new Date()
+              }
+            },
+            verificationAttempts: otpRecord.verificationAttempts + 1
+          }, { transaction });
+
+          logger.warn('OTP verification failed with Kaleyra', {
+            phoneNumber,
+            status: kaleyraVerifyResult.status
+          });
+          
+          throw new GraphQLError(kaleyraVerifyResult.message || 'Invalid OTP', {
+            extensions: { code: 'INVALID_OTP' }
+          });
+        }
+
+        // Update user phone
+        const existingUser = await UserModel.findByPk(user.id, { transaction });
+        await existingUser.update({
+          phoneNumber: otpRecord.phoneNumber,
+          countryCode: otpRecord.countryCode,
+          isPhoneVerified: true
+        }, { transaction });
+
+        // Mark OTP as verified
+        await otpRecord.update({
+          isVerified: true,
+          verifiedAt: new Date(),
+          providerResponse: kaleyraVerifyResult.status || 'approved',
+          providerResponse: {
+            ...otpRecord.providerResponse,
+            verificationResult: {
+              result: kaleyraVerifyResult,
+              verifiedAt: new Date()
+            }
+          }
+        }, { transaction });
+
+        await transaction.commit();
+
+        logger.info('Phone updated successfully', {
+          userId: user.id,
+          newPhone: otpRecord.phoneNumber,
+          countryCode: otpRecord.countryCode
+        });
+
+        return {
+          success: true,
+          user: existingUser,
+          message: 'Phone number updated successfully'
+        };
+      } catch (error) {
+        await transaction.rollback();
+        logger.error('Error in phone verification and update', {
+          userId: user.id,
+          error: error.message
+        });
+        if (error instanceof GraphQLError) throw error;
+        throw new GraphQLError('Failed to verify and update phone', {
+          extensions: { code: 'INTERNAL_SERVER_ERROR' }
+        });
+      }
+    }),
+
+    resendEmailOTP: requireAuth(async (_, { email }, { user, ipAddress, userAgent }) => {
+      try {
+        // Optionally, check if the user's email matches the one on file
+        if (user.email !== email) {
+          throw new GraphQLError('You can only resend OTP to your own email.', {
+            extensions: { code: 'EMAIL_MISMATCH' }
+          });
+        }
+        await sendEmailOTP(user.id, email, ipAddress, userAgent);
+        return {
+          success: true,
+          message: 'Verification code resent to your email.'
+        };
+      } catch (error) {
+        logger.error('Resend email otp failed', { userId: user.id, error: error.message });
+        if (error instanceof GraphQLError) throw error;
+        throw new GraphQLError('Resend email otp failed', {
+          extensions: { code: 'RESEND_EMAIL_OTP_FAILED' }
+        });
+      }
+    }),
+
+    verifyEmailOTP: requireAuth(async (_, { email, otp }, { user }) => {
+      try {
+        // Optionally, check if the user's email matches the one on file
+        if (user.email !== email) {
+          throw new GraphQLError('Provide your own email', {
+            extensions: { code: 'EMAIL_MISMATCH' }
+          });
+        }
+        return await verifyEmailOTP(user.id, email, otp);
+      } catch (error) {
+        logger.error('Verify email otp failed', { userId: user.id, error: error.message });
+        if (error instanceof GraphQLError) throw error;
+        throw new GraphQLError('Veridy email otp failed', {
+          extensions: { code: 'VERIFY_EMAIL_OTP' }
         });
       }
     }),
@@ -270,7 +893,7 @@ const userResolvers = {
 
     updateUserProfile: requireAuth(async (_, { input }, { user }) => {
       logger.info('Starting profile update', { userId: user.id });
-      const { name, bio, profileImage, removeProfileImage } = input;
+      const { name, bio, profileImage, removeProfileImage  } = input;
       try {
         const existingUser = await UserModel.findByPk(user.id);
     
@@ -288,6 +911,7 @@ const userResolvers = {
             }
           )
         }
+
     
         const updateData = {};
     

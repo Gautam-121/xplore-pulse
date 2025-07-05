@@ -129,7 +129,7 @@ query GetCurrentUser {
     email
     bio
     profileImageUrl
-    isVerified
+    isPhoneVerified
     isActive
     isProfileComplete
     onboardingStep
@@ -169,7 +169,7 @@ query SearchUsers {
       name
       bio
       profileImageUrl
-      isVerified
+      isPhoneVerified
       followersCount
       interests {
         id

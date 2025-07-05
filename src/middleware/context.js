@@ -1,6 +1,8 @@
 const authService = require('../services/authService');
 const logger = require('../utils/logger');
 const jwt = require('jsonwebtoken');
+const db = require('../config/dbConfig');
+const User = db.User;
 
 const createContext = async ({ req, res }) => {
   let session = null;
@@ -16,22 +18,29 @@ const createContext = async ({ req, res }) => {
       token: token.substring(0, 10) + '...' // Log partial token safely
     });
 
-    try {
-      // Try normal session token first
-      session = await authService.validateToken(token);
-      logger.debug('User successfully authenticated', {
-        userId: session?.user?.id || null
-      });
-    } catch (error) {
+    // Try normal session token first
+    session = await authService.validateToken(token);
+    if (!session) {
       // If normal session fails, try phone_verification token
       try {
         const decoded = jwt.verify(token, process.env.ACCESS_TOKEN_SECRET);
         if (decoded && decoded.type === 'phone_verification' && decoded.userId) {
-          phoneVerificationUser = { id: decoded.userId, onboardingStep: 'PHONE_VERIFICATION' };
-          logger.debug('Phone verification token accepted', { userId: decoded.userId });
+          // Fetch user record to get isActive
+          let userRecord = null;
+          try {
+            userRecord = await User.findByPk(decoded.userId);
+          } catch (dbErr) {
+            logger.warn('Failed to fetch user for phone verification', { userId: decoded.userId, error: dbErr.message });
+          }
+          phoneVerificationUser = {
+            id: decoded.userId,
+            onboardingStep: 'PHONE_VERIFICATION',
+            isActive: userRecord ? userRecord.isActive : false,
+            // Optionally, add more fields if needed
+          };
+          logger.debug('Phone verification token accepted', { userId: decoded.userId, isActive: phoneVerificationUser.isActive });
         } else {
           logger.warn('Token validation failed (not phone_verification)', {
-            error: error.message,
             token: token.substring(0, 10) + '...'
           });
         }
@@ -41,6 +50,10 @@ const createContext = async ({ req, res }) => {
           token: token.substring(0, 10) + '...'
         });
       }
+    } else {
+      logger.debug('User successfully authenticated', {
+        userId: session?.user?.id || null
+      });
     }
   } else {
     logger.debug('No authorization token found in request headers');

@@ -6,7 +6,6 @@ const UserInterest = db.UserInterest;
 const logger = require('../utils/logger');
 
 const createUserLoaders = () => {
-
   const userLoader = new DataLoader(async (userIds) => {
     logger.debug('userLoader: loading users with interests', { userIds });
 

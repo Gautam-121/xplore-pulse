@@ -77,45 +77,61 @@ const authResolvers = {
     sendOTP: async (_, { input }, { ipAddress, userAgent }) => {
       const { phoneNumber, countryCode, type } = input;
       logger.info('Sending OTP via Kaleyra', { phoneNumber, countryCode, type });
-
-      // Handle user creation/login logic
-      let user = await User.findOne({
-        where: { phoneNumber, countryCode },
-      });
-      if (user) checkUserActiveOrThrow(user);
-
-      // Rate limiting check
+    
+      // 1. User existence and type checks
+      let user = await User.findOne({ where: { phoneNumber, countryCode } });
+    
+      if (user && type === "POST_GOOGLE_VERIFY") {
+        throw new GraphQLError('Phone is already registered with another account', {
+          extensions: { code: 'PHONE_CONFLICT' }
+        });
+      } else if (user && type === "PHONE_AUTH") {
+        checkUserActiveOrThrow(user);
+      }
+    
+      // 2. Rate limiting: max 5 OTPs per hour per phone+type
+      const oneHourAgo = Date.now() - 60 * 60 * 1000
       const recentOTPs = await OTPVerification.count({
         where: {
           phoneNumber,
           countryCode,
           otpType: type,
-          createdAt: { [Op.gte]: Date.now() - 60 * 60 * 1000 }
+          createdAt: { [Op.gte]: oneHourAgo }
         }
       });
-
       if (recentOTPs >= 5) {
         logger.warn('OTP rate limit exceeded', { phoneNumber, countryCode, type });
         throw new GraphQLError('Too many OTP requests. Please try again later.', {
           extensions: { code: 'OTP_RATE_LIMIT_EXCEEDED' }
         });
       }
-
+    
+      // 3. Prevent spamming: min 30s between requests
+      const lastOTP = await OTPVerification.findOne({
+        where: { phoneNumber, countryCode, otpType: type },
+        order: [['createdAt', 'DESC']]
+      });
+      if (lastOTP && Date.now() - lastOTP.createdAt.getTime() < 30 * 1000) {
+        throw new GraphQLError('Please wait before requesting another OTP.', {
+          extensions: { code: 'OTP_TOO_SOON' }
+        });
+      }
+    
       const transaction = await sequelize.transaction();
       try {
-        // Send OTP via Kaleyra
+        // 4. Send OTP via Kaleyra
         const kaleyraSMSResult = await smsService.sendOTPSMS(phoneNumber, countryCode);
-
+    
         if (!kaleyraSMSResult.success || !kaleyraSMSResult.verifyId) {
           throw new GraphQLError('Failed to initiate OTP with provider', {
             extensions: { code: 'OTP_PROVIDER_FAILED' }
           });
         }
-
-        // Calculate expiration (default 10 minutes, or use Kaleyra's expiration if provided)
+    
+        // 5. Expiry: 10 minutes
         const expiresAt = Date.now() + 10 * 60 * 1000
-
-        // Store OTP record with Kaleyra verify_id
+    
+        // 6. Store OTP record
         await OTPVerification.create({
           phoneNumber,
           countryCode,
@@ -130,25 +146,27 @@ const authResolvers = {
             status: kaleyraSMSResult.status,
             sentAt: new Date()
           },
-          providerStatus: kaleyraSMSResult.status || 'pending'
+          providerStatus: kaleyraSMSResult.status || 'pending',
+          verificationAttempts: 0,
+          maxAttempts: 5 // Set max attempts per OTP
         }, { transaction });
-
+    
         await transaction.commit();
-
+    
         logger.info('OTP sent successfully via Kaleyra', {
           phoneNumber,
           countryCode,
           verifyId: kaleyraSMSResult.verifyId,
-          expiresAt: new Date(expiresAt),
+          expiresAt,
           type
         });
-
+    
         return {
           success: true,
           message: 'OTP sent successfully',
-          retryAfter: 60,
+          retryAfter: 30, // 30s cooldown
         };
-
+    
       } catch (error) {
         await transaction.rollback();
         logger.error('Failed to send OTP via Kaleyra', { phoneNumber, error: error.message });
@@ -160,10 +178,10 @@ const authResolvers = {
     verifyOTP: async (_, { input }, { ipAddress, userAgent }) => {
       const { phoneNumber, countryCode, otp, deviceInfo, type, role } = input;
       logger.info('Verifying OTP via Kaleyra', { phoneNumber, countryCode, type });
-
+    
       const transaction = await sequelize.transaction();
       try {
-        // Find the most recent OTP record for this phone number and type
+        // 1. Find latest, unexpired, unverified OTP
         const otpRecord = await OTPVerification.findOne({
           where: {
             phoneNumber,
@@ -177,86 +195,85 @@ const authResolvers = {
           lock: transaction.LOCK.UPDATE,
           transaction
         });
-
+    
         if (!otpRecord || !otpRecord.verifyId) {
           logger.warn('No valid OTP record found', { phoneNumber, countryCode, type });
           throw new GraphQLError('Invalid or expired OTP session', {
             extensions: { code: 'INVALID_OTP_SESSION' }
           });
         }
-
-        // Check local attempt limits (Kaleyra also has its own limits)
+    
+        // 2. Attempt limit
         if (otpRecord.verificationAttempts >= otpRecord.maxAttempts) {
           logger.warn('Local OTP verification attempts exceeded', { phoneNumber });
           throw new GraphQLError('Maximum verification attempts exceeded', {
             extensions: { code: 'OTP_ATTEMPTS_EXCEEDED' }
           });
         }
-
-        // Verify OTP with Kaleyra
-        let kaleraVerifyResult;
+    
+        // 3. Verify OTP with Kaleyra
+        let kaleyraVerifyResult;
         try {
-          kaleraVerifyResult = await smsService.verifyOTP(otpRecord.verifyId, otp);
-        } catch (kaleraError) {
-          // Increment attempt counter for provider errors too
+          kaleyraVerifyResult = await smsService.verifyOTP(otpRecord.verifyId, otp);
+        } catch (kaleyraError) {
           await otpRecord.increment('verificationAttempts', { transaction });
-          throw kaleraError;
+          throw kaleyraError;
         }
-
-        // Increment attempt counter regardless of result
+    
+        // 4. Increment attempt counter
         await otpRecord.increment('verificationAttempts', { transaction });
-
-        if (!kaleraVerifyResult.success || !kaleraVerifyResult.isValid) {
-          // Update provider status
+    
+        if (!kaleyraVerifyResult.success || !kaleyraVerifyResult.isValid) {
           await otpRecord.update({
-            providerStatus: kaleraVerifyResult.status || 'failed',
+            providerStatus: kaleyraVerifyResult.status || 'failed',
             providerResponse: {
               ...otpRecord.providerResponse,
               lastVerifyAttempt: {
-                result: kaleraVerifyResult,
+                result: kaleyraVerifyResult,
                 attemptedAt: new Date()
               }
             }
           }, { transaction });
-
+    
           logger.warn('OTP verification failed with Kaleyra', {
             phoneNumber,
             verifyId: otpRecord.verifyId,
-            status: kaleraVerifyResult.status
+            status: kaleyraVerifyResult.status
           });
-
-          throw new GraphQLError(kaleraVerifyResult.message || 'Invalid OTP', {
+    
+          throw new GraphQLError(kaleyraVerifyResult.message || 'Invalid OTP', {
             extensions: { code: 'INVALID_OTP' }
           });
         }
-
-        // Mark as verified
+    
+        // 5. Mark as verified
         await otpRecord.update({
           isVerified: true,
           verifiedAt: new Date(),
-          providerStatus: kaleraVerifyResult.status || 'approved',
+          providerStatus: kaleyraVerifyResult.status || 'approved',
           providerResponse: {
             ...otpRecord.providerResponse,
             verificationResult: {
-              result: kaleraVerifyResult,
+              result: kaleyraVerifyResult,
               verifiedAt: new Date()
             }
           }
         }, { transaction });
-
-        // Handle user creation/login logic
+    
+        // 6. User creation/login logic
         let user = await User.findOne({
           where: { phoneNumber, countryCode },
           lock: transaction.LOCK.UPDATE,
           transaction
         });
         if (user) checkUserActiveOrThrow(user);
-
+    
         const isNewUser = !user;
         if (isNewUser) {
           user = await User.create({
             phoneNumber,
             countryCode,
+            isPhoneVerified: true,
             onboardingStep: 'PROFILE_SETUP',
             role: role || 'USER'
           }, { transaction });
@@ -264,8 +281,8 @@ const authResolvers = {
         } else {
           logger.info('Existing user logged in via Kaleyra OTP', { userId: user.id });
         }
-
-        // Generate tokens
+    
+        // 7. Generate tokens
         const { accessToken, refreshToken } = await generateTokens(
           user.id,
           deviceInfo,
@@ -274,15 +291,15 @@ const authResolvers = {
           ipAddress,
           userAgent
         );
-
+    
         logger.info('Tokens issued after Kaleyra OTP verification', {
           userId: user.id,
           deviceId: deviceInfo?.deviceId,
           verifyId: otpRecord.verifyId
         });
-
+    
         await transaction.commit();
-
+    
         return {
           success: true,
           message: isNewUser ? 'Account created successfully' : 'Login successful',
@@ -290,7 +307,7 @@ const authResolvers = {
           isNewUser,
           authTokens: { accessToken, refreshToken }
         };
-
+    
       } catch (error) {
         await transaction.rollback();
         logger.error('OTP verification failed', { phoneNumber, error: error.message });
@@ -373,37 +390,24 @@ const authResolvers = {
     },
 
     googleAuth: async (_, { input }, { ipAddress, userAgent }) => {
-      const { code, deviceInfo } = input;
+      const { idToken, deviceInfo } = input;
       logger.info('Google auth initiated');
       const transaction = await sequelize.transaction();
       try {
-        if (!code) {
-          logger.warn('Google auth failed: Missing token code');
-          throw new GraphQLError('Google token is required', {
+        if (!idToken) {
+          logger.warn('Google auth failed: Missing idToken');
+          throw new GraphQLError('Google idToken is required', {
             extensions: { code: "GOOGLE_AUTH_FAILED" }
           });
         }
-
-        const oauth2Client = new OAuth2Client({
-          clientId: process.env.GOOGLE_CLIENT_ID,
-          clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-          redirectUri: process.env.GOOGLE_REDIRECT_URI,
-        });
-
-        let ticket, payload;
-
+    
+        const oauth2Client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+    
+        let payload;
         try {
-          logger.info('Exchanging Google auth code for tokens');
-          const { tokens } = await oauth2Client.getToken(code);
-          if (!tokens?.id_token) {
-            logger.warn('Google auth failed: No id_token returned');
-            throw new GraphQLError("Invalid or expired Google token", {
-              extensions: { code: "GOOGLE_AUTH_FAILED" }
-            });
-          }
-          logger.info('Verifying Google id_token');
-          ticket = await oauth2Client.verifyIdToken({
-            idToken: tokens.id_token,
+          logger.info('Verifying Google idToken');
+          const ticket = await oauth2Client.verifyIdToken({
+            idToken,
             audience: process.env.GOOGLE_CLIENT_ID
           });
           payload = ticket.getPayload();
@@ -414,51 +418,53 @@ const authResolvers = {
           });
           throw new GraphQLError('Invalid or expired Google token', {
             extensions: { code: "GOOGLE_AUTH_FAILED" }
-          }
-          );
+          });
         }
-
+    
         if (!payload || !payload.sub || !payload.email) {
           logger.error('Google auth failed: Incomplete payload', {
             payloadKeys: Object.keys(payload || {})
           });
           throw new GraphQLError('Incomplete token payload from Google', {
             extensions: { code: "GOOGLE_AUTH_FAILED" }
-          }
-          );
+          });
         }
-
-        const { email, name, picture } = payload;
+    
+        const { email, name } = payload;
         const googleId = payload.sub;
-
-        // 2. Find user by googleId or email
+    
+        // Find user by googleId or fallback to email
         let user = await User.findOne({ where: { googleId }, transaction });
         let isNewUser = false;
+    
         if (!user) {
           user = await User.findOne({ where: { email }, transaction });
         }
         if (user) checkUserActiveOrThrow(user);
-        // 3. If user does not exist, create
+    
         if (!user) {
           user = await User.create({
             googleId,
             email,
             name: name || email,
-            profileImageUrl: picture,
-            isVerified: false,
+            isEmailVerified: true,
             onboardingStep: 'PHONE_VERIFICATION',
             isProfileComplete: false,
             isActive: true
           }, { transaction });
+    
           isNewUser = true;
+    
           logger.info('New user created via Google Auth', { userId: user.id });
-          // Issue temporary phone verification token
+    
           const phoneVerificationToken = jwt.sign(
             { userId: user.id, type: 'phone_verification' },
             process.env.ACCESS_TOKEN_SECRET,
             { expiresIn: '15m' }
           );
+    
           await transaction.commit();
+    
           return {
             success: true,
             user,
@@ -469,20 +475,21 @@ const authResolvers = {
             message: 'Phone verification required. Please verify your phone number to continue.'
           };
         } else {
-          // If user exists but not linked, update googleId
           if (!user.googleId) {
             await user.update({ googleId }, { transaction });
           }
-          // If user is not verified (phone not verified), require phone verification
-          if (!user.isVerified || !user.phoneNumber) {
+    
+          if (!user.isPhoneVerified || !user.phoneNumber) {
             logger.info('Existing Google user requires phone verification', { userId: user.id });
-            // Issue temporary phone verification token
+    
             const phoneVerificationToken = jwt.sign(
               { userId: user.id, type: 'phone_verification' },
               process.env.ACCESS_TOKEN_SECRET,
               { expiresIn: '15m' }
             );
+    
             await transaction.commit();
+    
             return {
               success: true,
               user,
@@ -493,15 +500,18 @@ const authResolvers = {
               message: 'Phone verification required. Please verify your phone number to continue.'
             };
           }
+    
           logger.info('Existing user logged in via Google Auth', { userId: user.id });
         }
-
-        // 4. Issue tokens
-        const { accessToken, refreshToken, expiresAt } = await generateTokens(user.id, deviceInfo, user.role, transaction, ipAddress, userAgent);
-
+    
+        const { accessToken, refreshToken, expiresAt } = await generateTokens(
+          user.id, deviceInfo, user.role, transaction, ipAddress, userAgent
+        );
+    
         await transaction.commit();
-
+    
         logger.info('Tokens issued after Google Auth', { userId: user.id, deviceId: deviceInfo.deviceId });
+    
         return {
           success: true,
           user,
@@ -515,7 +525,9 @@ const authResolvers = {
         await transaction.rollback();
         logger.error('Google Auth failed', { error: error.message });
         if (error instanceof GraphQLError) throw error;
-        throw new GraphQLError('Google authentication failed', { extensions: { code: 'GOOGLE_AUTH_FAILED' } });
+        throw new GraphQLError('Google authentication failed', {
+          extensions: { code: 'GOOGLE_AUTH_FAILED' }
+        });
       }
     },
 
@@ -705,7 +717,7 @@ const authResolvers = {
         await user.update({
           phoneNumber,
           countryCode,
-          isVerified: true,
+          isPhoneVerified: true,
           onboardingStep: 'PROFILE_SETUP',
           isProfileComplete: false
         }, { transaction });
@@ -718,7 +730,7 @@ const authResolvers = {
           isNewUser: false,
           onboardingStep: user.onboardingStep,
           authTokens: { accessToken, refreshToken, expiresAt },
-          message: 'Phone verified and onboarding advanced'
+          message: 'Phone number verified successfully. Onboarding has advanced to the next step.'
         };
       } catch (error) {
         await transaction.rollback();

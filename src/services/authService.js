@@ -25,7 +25,7 @@ class AuthService {
           isActive: true,
           tokenExpiresAt: { [Op.gt]: new Date() }
         },
-        include: [{//
+        include: [{
           model: User,
           as: 'user',
           where: { isActive: true }
@@ -48,46 +48,6 @@ class AuthService {
     } catch (error) {
       logger.warn('AuthService: Token validation failed', { error: error.message });
       return null;
-    }
-  }
-
-  /**
-   * Revokes all sessions for a user (logout everywhere)
-   */
-  async revokeAllUserSessions(userId) {
-    logger.debug('AuthService: Revoking all sessions for user', { userId });
-    try {
-      const result = await AuthSession.update(
-        { isActive: false },
-        { where: { userId } }
-      );
-      logger.info('AuthService: Revoked all sessions for user', { userId });
-      return result;
-    } catch (error) {
-      logger.error('AuthService: Failed to revoke sessions for user', { userId, error });
-      throw new GraphQLError('Failed to revoke user sessions', { extensions: { code: 'SESSION_REVOKE_FAILED' } });
-    }
-  }
-
-  /**
-   * Returns all active sessions for a user
-   */
-  async getUserActiveSessions(userId) {
-    logger.debug('AuthService: Fetching active sessions for user', { userId });
-    try {
-      const sessions = await AuthSession.findAll({
-        where: {
-          userId,
-          isActive: true,
-          tokenExpiresAt: { [Op.gt]: new Date() }
-        },
-        order: [['lastUsedAt', 'DESC']]
-      });
-      logger.info('AuthService: Found active sessions for user', { count: sessions.length, userId });
-      return sessions;
-    } catch (error) {
-      logger.error('AuthService: Failed to fetch active sessions for user', { userId, error });
-      throw new GraphQLError('Failed to fetch user sessions', { extensions: { code: 'SESSION_FETCH_FAILED' } });
     }
   }
 }

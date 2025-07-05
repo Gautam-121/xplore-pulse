@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Google OAuth Test</title>
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        max-width: 600px;
+        margin: 50px auto;
+        padding: 20px;
+        background-color: #f5f5f5;
+      }
+      .container {
+        background: white;
+        padding: 30px;
+        border-radius: 10px;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+      }
+      h1 {
+        color: #333;
+        text-align: center;
+        margin-bottom: 30px;
+      }
+      .config-section {
+        margin-bottom: 30px;
+        padding: 20px;
+        background: #f9f9f9;
+        border-radius: 5px;
+      }
+      .config-section h3 {
+        margin-top: 0;
+        color: #666;
+      }
+      input[type="text"] {
+        width: 100%;
+        padding: 10px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        font-size: 14px;
+      }
+      .google-btn-container {
+        text-align: center;
+        margin: 30px 0;
+      }
+      .status {
+        margin-top: 20px;
+        padding: 15px;
+        border-radius: 5px;
+        display: none;
+      }
+      .status.success {
+        background: #d4edda;
+        border: 1px solid #c3e6cb;
+        color: #155724;
+      }
+      .status.error {
+        background: #f8d7da;
+        border: 1px solid #f5c6cb;
+        color: #721c24;
+      }
+      .status.info {
+        background: #d1ecf1;
+        border: 1px solid #bee5eb;
+        color: #0c5460;
+      }
+      .response-data {
+        margin-top: 10px;
+        padding: 10px;
+        background: #f8f9fa;
+        border-radius: 4px;
+        font-family: monospace;
+        font-size: 12px;
+        white-space: pre-wrap;
+        word-break: break-all;
+      }
+      .device-info {
+        margin-top: 20px;
+        padding: 15px;
+        background: #e9ecef;
+        border-radius: 5px;
+      }
+      .device-info h4 {
+        margin-top: 0;
+        color: #495057;
+      }
+      .device-info pre {
+        background: #f8f9fa;
+        padding: 10px;
+        border-radius: 4px;
+        font-size: 12px;
+        overflow-x: auto;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>Google OAuth Test</h1>
+
+      <div class="config-section">
+        <h3>Configuration</h3>
+        <p><strong>Google Client ID:</strong></p>
+        <input
+          type="text"
+          id="clientId"
+          placeholder="Enter your Google Client ID"
+          value=""
+        />
+
+        <p style="margin-top: 15px">
+          <strong>Backend GraphQL Endpoint:</strong>
+        </p>
+        <input
+          type="text"
+          id="backendUrl"
+          placeholder="Enter your backend URL"
+          value="http://localhost:4000/graphql"
+        />
+      </div>
+
+      <div class="google-btn-container">
+        <div
+          id="g_id_onload"
+          data-client_id=""
+          data-context="signin"
+          data-ux_mode="popup"
+          data-callback="handleCredentialResponse"
+          data-auto_prompt="false"
+        ></div>
+        <div
+          class="g_id_signin"
+          data-type="standard"
+          data-shape="rectangular"
+          data-theme="outline"
+          data-text="signin_with"
+          data-size="large"
+          data-logo_alignment="left"
+        ></div>
+      </div>
+
+      <div id="status" class="status"></div>
+
+      <div class="device-info">
+        <h4>Device Information (Auto-generated)</h4>
+        <pre id="deviceInfo"></pre>
+      </div>
+    </div>
+
+    <script>
+      // Generate device info
+      function generateDeviceInfo() {
+        const deviceInfo = {
+          appVersion: "1.2.3",
+          deviceId: "web-" + Math.random().toString(36).substr(2, 9),
+          deviceName: getBrowserName(),
+          deviceType: "Web",
+          osVersion: getOSInfo(),
+        };
+
+        document.getElementById("deviceInfo").textContent = JSON.stringify(
+          deviceInfo,
+          null,
+          2
+        );
+        return deviceInfo;
+      }
+
+      function getBrowserName() {
+        const userAgent = navigator.userAgent;
+        if (userAgent.includes("Chrome")) return "Chrome";
+        if (userAgent.includes("Firefox")) return "Firefox";
+        if (userAgent.includes("Safari")) return "Safari";
+        if (userAgent.includes("Edge")) return "Edge";
+        return "Unknown Browser";
+      }
+
+      function getOSInfo() {
+        const userAgent = navigator.userAgent;
+        if (userAgent.includes("Windows")) return "Windows";
+        if (userAgent.includes("Mac")) return "macOS";
+        if (userAgent.includes("Linux")) return "Linux";
+        if (userAgent.includes("Android")) return "Android";
+        if (userAgent.includes("iPhone") || userAgent.includes("iPad"))
+          return "iOS";
+        return "Unknown OS";
+      }
+
+      // Initialize device info on page load
+      const deviceInfo = generateDeviceInfo();
+
+      // Update Google client ID when input changes
+      document
+        .getElementById("clientId")
+        .addEventListener("input", function () {
+          const clientId = this.value;
+          document
+            .getElementById("g_id_onload")
+            .setAttribute("data-client_id", clientId);
+
+          // Reinitialize Google Sign-In
+          if (clientId && window.google) {
+            google.accounts.id.initialize({
+              client_id: clientId,
+              callback: handleCredentialResponse,
+            });
+            google.accounts.id.renderButton(
+              document.querySelector(".g_id_signin"),
+              { theme: "outline", size: "large" }
+            );
+          }
+        });
+
+      // Show status message
+      function showStatus(message, type = "info", data = null) {
+        const statusDiv = document.getElementById("status");
+        statusDiv.className = `status ${type}`;
+        statusDiv.style.display = "block";
+
+        let content = message;
+        if (data) {
+          content += `<div class="response-data">${JSON.stringify(
+            data,
+            null,
+            2
+          )}</div>`;
+        }
+        statusDiv.innerHTML = content;
+      }
+
+      // Handle Google Sign-In response
+      async function handleCredentialResponse(response) {
+        showStatus("Received Google credential, sending to backend...", "info");
+
+        const backendUrl = document.getElementById("backendUrl").value;
+        if (!backendUrl) {
+          showStatus("Please enter backend URL", "error");
+          return;
+        }
+
+        const mutation = `
+                mutation GoogleAuth($input: GoogleAuthInput!) {
+                    googleAuth(input: $input) {
+                        isNewUser
+                        message
+                        phoneVerificationToken
+                        success
+                        onboardingStep
+                        authTokens {
+                          accessToken
+                          refreshToken
+                        }
+                    }
+                }
+            `;
+
+        const variables = {
+          input: {
+            idToken: response.credential,
+            deviceInfo: deviceInfo,
+          },
+        };
+
+        try {
+          const result = await fetch(backendUrl, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              query: mutation,
+              variables: variables,
+            }),
+          });
+
+          const data = await result.json();
+
+          if (data.errors) {
+            showStatus("GraphQL Error:", "error", data.errors);
+          } else if (data.data && data.data.googleAuth) {
+            if (data.data.googleAuth.success) {
+              showStatus(
+                "✅ Authentication successful!",
+                "success",
+                data.data.googleAuth
+              );
+            } else {
+              showStatus(
+                "Authentication failed",
+                "error",
+                data.data.googleAuth
+              );
+            }
+          } else {
+            showStatus("Unexpected response format", "error", data);
+          }
+        } catch (error) {
+          showStatus("Network error: " + error.message, "error");
+        }
+      }
+
+      // Initialize Google Sign-In when page loads
+      window.onload = function () {
+        showStatus(
+          "Please enter your Google Client ID to enable sign-in",
+          "info"
+        );
+      };
+    </script>
+  </body>
+</html>

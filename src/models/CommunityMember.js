@@ -2,64 +2,64 @@ module.exports = (sequelize, Sequelize) => {
     const CommunityMember = sequelize.define('CommunityMember',
         {
             id: {
-                type: DataTypes.UUID,
-                defaultValue: DataTypes.UUIDV4,
+                type: Sequelize.UUID,
+                defaultValue: Sequelize.UUIDV4,
                 primaryKey: true
             },
-            userId: {
-                type: DataTypes.UUID,
-                allowNull: false,
-                references: {
-                    model: User,
-                    key: 'id'
-                }
-            },
-            communityId: {
-                type: DataTypes.UUID,
-                allowNull: false,
-                references: {
-                    model: Community,
-                    key: 'id'
-                }
-            },
+            // userId: {
+            //     type: Sequelize.UUID,
+            //     allowNull: false,
+            //     references: {
+            //         model: User,
+            //         key: 'id'
+            //     }
+            // },
+            // communityId: {
+            //     type: Sequelize.UUID,
+            //     allowNull: false,
+            //     references: {
+            //         model: Community,
+            //         key: 'id'
+            //     }
+            // },
             role: {
-                type: DataTypes.ENUM('OWNER', 'ADMIN', 'MODERATOR', 'MEMBER'),
+                type: Sequelize.ENUM('OWNER', 'ADMIN', 'MODERATOR', 'MEMBER'),
                 defaultValue: 'MEMBER'
             },
             status: {
-                type: DataTypes.ENUM('PENDING', 'APPROVED', 'REJECTED', 'BANNED'),
+                type: Sequelize.ENUM('PENDING', 'APPROVED', 'REJECTED', 'BANNED'),
                 defaultValue: 'PENDING'
             },
             requestedAt: {
-                type: DataTypes.DATE,
-                defaultValue: DataTypes.NOW
+                type: Sequelize.DATE,
+                defaultValue: Sequelize.NOW
             },
             joinedAt: {
-                type: DataTypes.DATE
+                type: Sequelize.DATE
             },
             lastActiveAt: {
-                type: DataTypes.DATE
+                type: Sequelize.DATE
             },
-            invitedBy: {
-                type: DataTypes.UUID,
-                references: {
-                    model: User,
-                    key: 'id'
-                }
-            },
+            // invitedBy: {
+            //     type: Sequelize.UUID,
+            //     references: {
+            //         model: User,
+            //         key: 'id'
+            //     }
+            // },
             banReason: {
-                type: DataTypes.TEXT
+                type: Sequelize.TEXT
             },
             bannedAt: {
-                type: DataTypes.DATE
+                type: Sequelize.DATE
             },
-            bannedBy: {
-                type: DataTypes.UUID,
-                references: {
-                    model: User,
-                    key: 'id'
-                }
-            }
+            // bannedBy: {
+            //     type: Sequelize.UUID,
+            //     references: {
+            //         model: User,
+            //         key: 'id'
+            //     }
+            // }
         }, {
         timestamps: true,
         indexes: [

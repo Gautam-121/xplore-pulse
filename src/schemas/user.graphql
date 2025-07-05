@@ -8,17 +8,28 @@ type User {
   email: String
   bio: String
   profileImageUrl: String
-  isVerified: Boolean!
+  interests: [Interest!]!
+  isPhoneVerified: Boolean!
+  isEmailVerified: Boolean!
   isActive: Boolean!
   isProfileComplete: Boolean!
   onboardingStep: OnboardingStep!
   notificationSettings: NotificationSettings!
-  interests: [Interest!]!
   createdAt: DateTime!
   updatedAt: DateTime!
   lastActiveAt: DateTime!
   authTokens: AuthTokens
 }
+
+type Location {
+    latitude: Float!
+    longitude: Float!
+    address: String
+    city: String
+    state: String
+    country: String
+    zipCode: String
+  }
 
 enum OnboardingStep {
   PHONE_VERIFICATION
@@ -40,6 +51,7 @@ input ProfileSetupInput {
   name: String!
   bio: String
   profileImage: Upload
+  email: String
 }
 
 input UpdateProfileInput {
@@ -95,13 +107,19 @@ type UpdateNotificationSettingsResponse {
   message: String!
 }
 
+type EmailOTPResponse {
+  success: Boolean!
+  message: String!
+  user: User
+}
 
 type PublicUserProfile {
   id: ID!
   name: String
   bio: String
   profileImageUrl: String
-  isVerified: Boolean!
+  isPhoneVerified: Boolean!
+  isEmailVerified: Boolean!
   interests: [Interest!]!
   createdAt: DateTime!
 }
@@ -110,6 +128,12 @@ type SearchUsersResponse {
   users: [PublicUserProfile!]!
   totalCount: Int!
   hasMore: Boolean!
+}
+
+type OTPRequestResponse {
+  success: Boolean!
+  message: String!
+  retryAfter: Int
 }
 
 # User Mutations
@@ -121,6 +145,18 @@ extend type Mutation {
   # Profile Management
   updateUserProfile(input: UpdateProfileInput!): UpdateProfileResponse!
   updateNotificationSettings(input: NotificationSettingsInput!): UpdateNotificationSettingsResponse!
+  # Email Verification
+  resendEmailOTP(email: String!): EmailOTPResponse!
+  verifyEmailOTP(email: String!, otp: String!): EmailOTPResponse!
+
+  # Email update flow
+  requestEmailUpdate(email: String!): OTPRequestResponse!
+  verifyAndUpdateEmail(email: String!, otp: String!): ProfileSetupResponse!
+
+  # Phone update flow
+  requestPhoneUpdate(phoneNumber: String!, countryCode: String!): OTPRequestResponse!
+  verifyAndUpdatePhone(phoneNumber: String!, countryCode: String!, otp: String!): ProfileSetupResponse!
+  
   # Account Management
   deleteAccount(reason: String): DeleteAccountResponse!
 }

@@ -6,7 +6,6 @@ const logger = require('../utils/logger');
 const SUBDIRECTORY = 'prompthkithustlebot';
 require('dotenv').config();
 
-console.log("process.env.ENDPOINT", process.env.ENDPOINT);
 class FileUploadService {
   constructor() {
     this.minioClient = new Minio.Client({

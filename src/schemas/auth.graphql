@@ -6,11 +6,17 @@ type AuthTokens {
   refreshToken: String!
 }
 
+enum DeviceType {
+  iOS,
+  Android, 
+  Web
+}
+
 # Active Sessions Types
 type AuthSession {
   id: ID!
   deviceId: String!
-  deviceType: String!
+  deviceType: DeviceType!
   deviceName: String
   appVersion: String!
   osVersion: String!
@@ -51,7 +57,7 @@ input VerifyOTPInput {
 
 input DeviceInfoInput {
   deviceId: String!
-  deviceType: String!
+  deviceType: DeviceType!
   deviceName: String
   appVersion: String!
   osVersion: String!
@@ -103,7 +109,7 @@ extend type Query {
 }
 
 input GoogleAuthInput {
-  code: String!
+  idToken: String!
   deviceInfo: DeviceInfoInput!
 }
 
