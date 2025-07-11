@@ -1,36 +1,42 @@
-# User GraphQL Schema
+# ----------------------------
+# USER TYPE DEFINITIONS
+# ----------------------------
 
+# Represents the authenticated user of the application
 type User {
   id: ID!
-  phoneNumber: String!
-  countryCode: String!
-  name: String
-  email: String
-  bio: String
-  profileImageUrl: String
-  interests: [Interest!]!
-  isPhoneVerified: Boolean!
-  isEmailVerified: Boolean!
-  isActive: Boolean!
-  isProfileComplete: Boolean!
-  onboardingStep: OnboardingStep!
-  notificationSettings: NotificationSettings!
-  createdAt: DateTime!
-  updatedAt: DateTime!
-  lastActiveAt: DateTime!
-  authTokens: AuthTokens
+  phoneNumber: String!                     # User's registered phone number
+  countryCode: String!                     # Country code for the phone number (e.g., +91)
+  name: String                             # Full name of the user
+  email: String                            # Email address (optional)
+  bio: String                              # Short bio/about section
+  profileImageUrl: String                  # URL to user's profile image
+  interests: [Interest!]!                  # List of interests selected by user
+  isPhoneVerified: Boolean!                # Has the phone number been verified
+  isEmailVerified: Boolean!                # Has the email address been verified
+  isActive: Boolean!                       # Is the account currently active
+  isProfileComplete: Boolean!              # Indicates if the onboarding is complete
+  onboardingStep: OnboardingStep!          # Current step in onboarding flow
+  notificationSettings: NotificationSettings! # User's notification preferences
+  createdAt: DateTime!                     # Account creation timestamp
+  updatedAt: DateTime!                     # Last profile update timestamp
+  lastActiveAt: DateTime!                  # Last time the user was active
+  authTokens: AuthTokens                   # Optional: returned only on login/mutation
+  location: Location
 }
 
+# Geolocation structure
 type Location {
-    latitude: Float!
-    longitude: Float!
-    address: String
-    city: String
-    state: String
-    country: String
-    zipCode: String
-  }
+  latitude: Float!
+  longitude: Float!
+}
 
+input LocationInput {
+  latitude: Float!
+  longitude: Float!
+}
+
+# Enum representing user onboarding flow stages
 enum OnboardingStep {
   PHONE_VERIFICATION
   PROFILE_SETUP
@@ -39,6 +45,7 @@ enum OnboardingStep {
   COMPLETED
 }
 
+# User's notification preferences
 type NotificationSettings {
   pushNotifications: Boolean!
   emailNotifications: Boolean!
@@ -46,73 +53,91 @@ type NotificationSettings {
   eventReminders: Boolean!
 }
 
-# User Input Types
+# ----------------------------
+# INPUT TYPES
+# ----------------------------
+
+# Input for completing profile setup
 input ProfileSetupInput {
   name: String!
-  bio: String
-  profileImage: Upload
+  bio: String!
+  profileImage: Upload                    # Image upload for profile picture
   email: String
+  location: LocationInput
 }
 
+# Input for updating an existing user profile
 input UpdateProfileInput {
   name: String
   bio: String
-  profileImage: Upload
-  removeProfileImage: Boolean
+  profileImage: Upload                    # New profile picture to upload
+  removeProfileImage: Boolean             # Flag to remove current image
+  location: LocationInput
 }
 
+# Input for updating notification preferences
 input NotificationSettingsInput {
   pushNotifications: Boolean
   emailNotifications: Boolean
   communityUpdates: Boolean
   eventReminders: Boolean
-  fcmToken:String
+  fcmToken: String                        # For push notification registration
 }
 
+# ----------------------------
+# RESPONSE TYPES
+# ----------------------------
 
-# User Response Types
+# Response after scheduling an account deletion
 type DeleteAccountResponse {
   success: Boolean!
   message: String!
   scheduledDeletionDate: DateTime!
 }
 
+# Response after completing profile setup
 type ProfileSetupResponse {
   success: Boolean!
   user: User!
   message: String!
 }
 
+# Response after selecting interests
 type SelectInterestsResponse {
   success: Boolean!
   user: User!
   message: String!
 }
 
+# Response after updating onboarding step
 type UpdateOnboardingResponse {
   success: Boolean!
   user: User!
   message: String!
 }
 
+# Response after updating profile details
 type UpdateProfileResponse {
   success: Boolean!
   user: User!
   message: String!
 }
 
+# Response after updating notification preferences
 type UpdateNotificationSettingsResponse {
   success: Boolean!
   notificationSettings: NotificationSettings!
   message: String!
 }
 
+# Response for email OTP verification/resend
 type EmailOTPResponse {
   success: Boolean!
   message: String!
   user: User
 }
 
+# Public version of the user profile (no sensitive data)
 type PublicUserProfile {
   id: ID!
   name: String
@@ -124,45 +149,55 @@ type PublicUserProfile {
   createdAt: DateTime!
 }
 
+# Response when searching for users
 type SearchUsersResponse {
   users: [PublicUserProfile!]!
   totalCount: Int!
   hasMore: Boolean!
 }
 
+# OTP request generic response
 type OTPRequestResponse {
   success: Boolean!
   message: String!
-  retryAfter: Int
+  retryAfter: Int                         # Seconds to wait before retry
 }
 
-# User Mutations
+# ----------------------------
+# MUTATION DEFINITIONS
+# ----------------------------
+
 extend type Mutation {
-  # Profile Setup
+  # --------- Onboarding ---------
   completeProfileSetup(input: ProfileSetupInput!): ProfileSetupResponse!
   selectInterests(interestIds: [ID!]!): SelectInterestsResponse!
   updateOnboardingStep(step: OnboardingStep!): UpdateOnboardingResponse!
-  # Profile Management
+
+  # --------- Profile Management ---------
   updateUserProfile(input: UpdateProfileInput!): UpdateProfileResponse!
   updateNotificationSettings(input: NotificationSettingsInput!): UpdateNotificationSettingsResponse!
-  # Email Verification
+
+  # --------- Email Verification ---------
   resendEmailOTP(email: String!): EmailOTPResponse!
   verifyEmailOTP(email: String!, otp: String!): EmailOTPResponse!
 
-  # Email update flow
+  # --------- Email Update ---------
   requestEmailUpdate(email: String!): OTPRequestResponse!
-  verifyAndUpdateEmail(email: String!, otp: String!): ProfileSetupResponse!
+  verifyAndUpdateEmail(otp: String!): ProfileSetupResponse!
 
-  # Phone update flow
+  # --------- Phone Update ---------
   requestPhoneUpdate(phoneNumber: String!, countryCode: String!): OTPRequestResponse!
-  verifyAndUpdatePhone(phoneNumber: String!, countryCode: String!, otp: String!): ProfileSetupResponse!
-  
-  # Account Management
-  deleteAccount(reason: String): DeleteAccountResponse!
+  verifyAndUpdatePhone(otp: String!): ProfileSetupResponse!
+
+  # --------- Account Deletion ---------
+  deleteAccount(reason: String!): DeleteAccountResponse!
 }
 
-# User Queries
+# ----------------------------
+# QUERY DEFINITIONS
+# ----------------------------
+
 extend type Query {
-  # User queries
+  # Returns currently authenticated user profile
   currentUser: User
-} 
+}

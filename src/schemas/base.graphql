@@ -1,21 +1,39 @@
-# Base GraphQL Schema - Defines base types that are extended by other schemas
+# ------------------------------
+# SCALARS
+# ------------------------------
 
+# A scalar for ISO-formatted date-time strings (e.g., "2024-06-28T12:34:56.789Z")
 scalar DateTime
+
+# A scalar for file uploads using GraphQL multipart spec
 scalar Upload
+
+# A scalar representing date only (without time)
 scalar Date
 
-# Base types that can be extended
+# ------------------------------
+# ROOT TYPE DEFINITIONS
+# ------------------------------
+
+# Root Query type – extend this in other schemas
+# The underscore (_) is a placeholder field required by GraphQL
 type Query {
   _: Boolean
 }
 
+# Root Mutation type – extend this in feature-specific modules
+# Placeholder field allows schema to remain valid if no mutations are defined
 type Mutation {
   _: Boolean
 }
 
-# Common response type used across multiple schemas
+# ------------------------------
+# COMMON RESPONSE TYPE
+# ------------------------------
+
+# A standard reusable response structure for mutations and queries
 type GenericResponse {
-  success: Boolean!
-  message: String!
-  code: String
-} 
+  success: Boolean!   # Whether the operation was successful
+  message: String!    # A human-readable message (success or error info)
+  code: String        # Optional code to identify response types (e.g., "USER_NOT_FOUND")
+}

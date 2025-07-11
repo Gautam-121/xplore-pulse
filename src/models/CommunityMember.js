@@ -72,6 +72,10 @@ module.exports = (sequelize, Sequelize) => {
             },
             {
                 fields: ['userId', 'status']
+            },
+            {
+                name: 'user_status_joinedAt_idx',
+                fields: ['userId', 'status', 'joinedAt'],
             }
         ]
     });

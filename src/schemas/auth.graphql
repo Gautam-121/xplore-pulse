@@ -1,124 +1,169 @@
-# Authentication GraphQL Schema
+# ------------------------------
+# TYPES AND ENUMS
+# ------------------------------
 
-# Auth Types
+# Tokens returned after successful authentication
 type AuthTokens {
-  accessToken: String!
-  refreshToken: String!
+  accessToken: String!       # Short-lived access token (JWT)
+  refreshToken: String!      # Long-lived refresh token for renewing session
 }
 
+# Supported client device types
 enum DeviceType {
-  iOS,
-  Android, 
+  iOS
+  Android
   Web
 }
 
-# Active Sessions Types
+# Representation of a user's active session
 type AuthSession {
   id: ID!
-  deviceId: String!
-  deviceType: DeviceType!
-  deviceName: String
-  appVersion: String!
-  osVersion: String!
-  ipAddress: String
-  userAgent: String
-  lastUsedAt: DateTime!
-  tokenExpiresAt: DateTime!
-  refreshExpiresAt: DateTime!
-  isCurrentSession: Boolean!
+  deviceId: String!           # Unique identifier for the device
+  deviceType: DeviceType!     # iOS, Android, or Web
+  deviceName: String          # Human-readable device name (e.g., "iPhone 14 Pro")
+  appVersion: String!         # App version installed on the device
+  osVersion: String!          # OS version (e.g., "iOS 17.3.1")
+  ipAddress: String           # IP address of the session
+  userAgent: String           # Raw User-Agent string
+  lastUsedAt: DateTime!       # Timestamp of last token usage
+  tokenExpiresAt: DateTime!   # Access token expiration timestamp
+  refreshExpiresAt: DateTime! # Refresh token expiration timestamp
+  isCurrentSession: Boolean!  # Whether this is the current session making the request
 }
 
+# Wrapper for active session results
 type ActiveSessionsResponse {
   success: Boolean!
-  sessions: [AuthSession!]!
-  totalCount: Int!
+  sessions: [AuthSession!]!   # List of active sessions for current user
+  totalCount: Int!            # Total number of sessions found
 }
 
-# Auth/OTP Inputs and Types
+# ------------------------------
+# OTP FLOW INPUTS & ENUMS
+# ------------------------------
+
+# Input for sending an OTP
 input SendOTPInput {
-  phoneNumber: String!
-  countryCode: String!
-  type: OTPType!
+  phoneNumber: String!        # User's mobile number
+  countryCode: String!        # E.g., "+91" for India
+  type: OTPType!              # Type of OTP use-case
 }
 
+# OTP use-case types
 enum OTPType {
-  PHONE_AUTH,
-  POST_GOOGLE_VERIFY
+  PHONE_AUTH                 # Standard phone login
+  POST_GOOGLE_VERIFY         # Used after Google login (for additional verification)
 }
 
+# Input to initiate Google auth flow
+input GoogleAuthInput {
+  idToken: String!            # Google ID token from frontend
+  deviceInfo: DeviceInfoInput!
+}
+
+# Input for verifying OTP
 input VerifyOTPInput {
   phoneNumber: String!
   countryCode: String!
-  otp: String!
+  otp: String!                # 4/6-digit code received by user
   type: OTPType!
   deviceInfo: DeviceInfoInput!
-  role: UserRole
+  role: UserRole              # Role assigned upon registration
 }
 
+# Device info submitted with login or OTP
 input DeviceInfoInput {
-  deviceId: String!
-  deviceType: DeviceType!
-  deviceName: String
-  appVersion: String!
-  osVersion: String!
-  fcmToken: String
+  deviceId: String!           # Unique hardware/device ID
+  deviceType: DeviceType!     # iOS, Android, or Web
+  deviceName: String          # Friendly name (e.g., “Pixel 8”)
+  appVersion: String!         # Version of the app installed
+  osVersion: String!          # OS version (e.g., “Android 14”)
+  fcmToken: String            # Firebase Cloud Messaging token (for push notifications)
 }
 
-# User roles
+# ------------------------------
+# USER ROLES
+# ------------------------------
+
 enum UserRole {
-  USER
-  ADMIN
-  MODERATOR
+  USER                        # Regular user
+  ADMIN                       # Admin user with full permissions
+  MODERATOR                   # Moderator with partial permissions
 }
 
-# Auth Response Types
+# ------------------------------
+# AUTH RESPONSES
+# ------------------------------
+
+# Response after sending an OTP
 type SendOTPResponse {
   success: Boolean!
   message: String!
-  retryAfter: Int
+  retryAfter: Int             # Optional: seconds to wait before resending OTP
 }
 
+# Response after verifying OTP
 type VerifyOTPResponse {
   success: Boolean!
   message: String!
-  user: User
-  isNewUser: Boolean!
-  authTokens: AuthTokens
+  user: User                  # Populated user data after successful login
+  isNewUser: Boolean!         # Indicates if user is being created for first time
+  authTokens: AuthTokens      # Tokens issued upon login
 }
 
+# Response when refreshing session via refreshToken
 type RefreshTokenResponse {
   success: Boolean!
   authTokens: AuthTokens
   message: String!
 }
 
-# Auth Mutations
+# ------------------------------
+# GOOGLE AUTH FLOW
+# ------------------------------
+
+# Response for Google auth flows
+type GoogleAuthResponse {
+  success: Boolean!
+  user: User                  # The authenticated user
+  isNewUser: Boolean!
+  onboardingStep: String!     # e.g., “PHONE_VERIFICATION” or “COMPLETE_PROFILE”
+  authTokens: AuthTokens      # Tokens if onboarding is complete
+  phoneVerificationToken: String  # Token used to verify phone if onboarding incomplete
+  message: String!
+}
+
+# ------------------------------
+# AUTH MUTATIONS
+# ------------------------------
+
 extend type Mutation {
-  # Authentication
+  # Send OTP to user's phone
   sendOTP(input: SendOTPInput!): SendOTPResponse!
+
+  # Verify OTP and login or register the user
   verifyOTP(input: VerifyOTPInput!): VerifyOTPResponse!
+
+  # Refresh JWT tokens using refresh token
   refreshToken(refreshToken: String!): RefreshTokenResponse!
+
+  # Logout user from current or all sessions
   logout(deviceId: String, allDevices: Boolean): GenericResponse!
+
+  # Authenticate with Google OAuth (client-side flow)
   googleAuth(input: GoogleAuthInput!): GoogleAuthResponse!
+
+  # Verify phone OTP after Google login (hybrid flow)
   verifyGooglePhoneOTP(input: VerifyOTPInput!): GoogleAuthResponse!
 }
 
-# Auth Queries
+# ------------------------------
+# AUTH QUERIES
+# ------------------------------
+
 extend type Query {
+  # Get active sessions of the logged-in user
   activeSessions: ActiveSessionsResponse!
 }
 
-input GoogleAuthInput {
-  idToken: String!
-  deviceInfo: DeviceInfoInput!
-}
 
-type GoogleAuthResponse {
-  success: Boolean!
-  user: User
-  isNewUser: Boolean!
-  onboardingStep: String!
-  authTokens: AuthTokens
-  phoneVerificationToken: String
-  message: String!
-} 

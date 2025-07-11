@@ -1,33 +1,46 @@
+# ----------------------------
+# INTEREST TYPE DEFINITIONS
+# ----------------------------
+
+# Represents an individual user interest (e.g., Technology, Travel)
 type Interest {
   id: ID!
-  name: String!
-  slug: String!
-  description: String
-  iconUrl: String
-  colorHex: String
-  category: InterestCategory!
-  isPopular: Boolean!
-  followersCount: Int!
-  sortOrder: Int!
-  isActive: Boolean!
+  name: String!                  # Display name of the interest
+  slug: String!                  # URL-friendly unique identifier
+  description: String            # Optional longer description
+  iconUrl: String                # Optional icon image URL
+  colorHex: String               # Hex code for color branding
+  category: InterestCategory!    # Category grouping
+  isPopular: Boolean!            # Marked as popular for discovery
+  followersCount: Int!           # Number of users following this interest
+  sortOrder: Int!                # Used for custom ordering in UI
+  isActive: Boolean!             # Indicates if the interest is active
 }
 
+# Edge object for pagination (Relay-style)
 type InterestEdge {
   node: Interest!
   cursor: String!
 }
 
+# Connection object for paginated list of interests
 type InterestConnection {
-  edges: [InterestEdge!]!
-  pageInfo: PageInfo!
-  totalCount: Int!
+  edges: [InterestEdge!]!        # The list of interest nodes
+  pageInfo: PageInfo!            # Information about pagination
+  totalCount: Int!               # Total number of interests available
 }
 
+# Relay-style pageInfo type for cursor-based pagination
 type PageInfo {
-  hasNextPage: Boolean!
-  endCursor: String
+  hasNextPage: Boolean!          # If there's another page available
+  endCursor: String              # Cursor to fetch the next page
 }
 
+# ----------------------------
+# ENUMS
+# ----------------------------
+
+# Enum grouping interests into high-level categories
 enum InterestCategory {
   TECHNOLOGY
   TRAVEL
@@ -45,27 +58,56 @@ enum InterestCategory {
   PHOTOGRAPHY
 }
 
+# ----------------------------
+# INPUT TYPES
+# ----------------------------
+
+# Input used for creating a new Interest
 input CreateInterestInput {
-  name: String!
-  slug: String!
-  description: String
-  iconUrl: String
-  colorHex: String
-  category: InterestCategory!
-  sortOrder: Int
+  name: String!                  # Display name of the interest
+  slug: String!                  # Unique slug for the interest
+  description: String            # Optional detailed description
+  iconUrl: String                # Optional icon URL
+  colorHex: String               # Optional hex color code
+  category: InterestCategory!    # Required category for classification
+  sortOrder: Int                 # Optional custom sort order
 }
 
+# ----------------------------
+# RESPONSE TYPES
+# ----------------------------
+
+# Response type returned after creating an interest
 type CreateInterestResponse {
-  success: Boolean!
-  message: String!
+  success: Boolean!              # Indicates if creation was successful
+  message: String!               # Message with success or failure info
 }
 
-
+# ----------------------------
+# QUERY DEFINITIONS
+# ----------------------------
 
 type Query {
-  interests(query: String, category: InterestCategory, popular: Boolean, first: Int = 10, after: String): InterestConnection!
+  # Fetch a paginated list of interests
+  # - Can filter by category or popularity
+  # - Supports search query and pagination via cursor
+  interests(
+    query: String,                       # Text-based search
+    category: InterestCategory,          # Filter by interest category
+    popular: Boolean,                    # Filter popular interests
+    first: Int = 10,                     # Number of results to return
+    after: String                        # Cursor to paginate after
+  ): InterestConnection!
 }
 
+# ----------------------------
+# MUTATION DEFINITIONS
+# ----------------------------
+
 extend type Mutation {
+  # Create a new interest in the system
   createInterest(input: CreateInterestInput!): CreateInterestResponse!
-} 
+
+  # Bulk create interests
+  createInterests(inputs: [CreateInterestInput!]!): [CreateInterestResponse!]!
+}

@@ -1,351 +1,312 @@
-type Community {
+# Community Type and Related Enums
+
+# Represents a community group
+# Includes metadata, permissions, and relationship with users
+ type Community {
     id: ID!
     name: String!
-    slug: String!  # Add missing slug field
+    slug: String!                   # Unique, SEO-friendly identifier
     description: String!
-    imageUrl: String
-    coverImageUrl: String
-    isPrivate: Boolean!
-    isPaid: Boolean!
-    price: Float
-    currency: String
-    memberCount: Int!
-    postCount: Int!
-    eventCount: Int!
-    location: Location
-    interests: [Interest!]!
-    owner: User!
-    admins: [User!]!
-    moderators: [User!]!
-    membershipStatus: MembershipStatus
-    isOwner: Boolean!
-    isAdmin: Boolean!
-    isModerator: Boolean!
-    canPost: Boolean!
-    canCreateEvents: Boolean!
+    imageUrl: String               # Community profile image
+    coverImageUrl: String          # Community cover/banner image
+    isPrivate: Boolean!            # True = only approved members can join
+    isPaid: Boolean!               # True = user must pay to join
+    price: Float                   # Required if isPaid is true
+    currency: Currency               # Currency for paid communities (e.g., USD)
+    memberCount: Int!              # Total number of members
+    postCount: Int!                # Number of posts in the community
+    eventCount: Int!               # Number of events hosted
+    location: Location             # Optional physical location of the community
+    interests: [Interest!]!        # Tags or interest categories
+    owner: User!                   # Creator of the community
+    admins: [User!]!               # Additional admins
+    moderators: [User!]!           # Moderators who manage discussions
+    membershipStatus: MembershipStatus  # Current user's membership status
+    isOwner: Boolean!              # Is the current user the owner
+    isAdmin: Boolean!              # Is the current user an admin
+    isModerator: Boolean!          # Is the current user a moderator
+    canPost: Boolean!              # Whether the user can post
+    canCreateEvents: Boolean!      # Whether the user can create events
     createdAt: Date!
     updatedAt: Date!
-  }
+ }
 
-  enum MembershipStatus {
-    NOT_MEMBER
-    PENDING
-    MEMBER
-    REJECTED
-    BANNED
-  }
+# Enum representing user's membership state in a community
+enum MembershipStatus {
+  NOT_MEMBER
+  PENDING
+  MEMBER
+  REJECTED
+  BANNED
+}
 
-  enum MemberRole {
-    OWNER
-    ADMIN
-    MODERATOR
-    MEMBER
-  }
+enum Currency {
+    INR
+    USD
+}
 
-  enum MemberRequestStatus {
-    PENDING
-    APPROVED
-    REJECTED
-  }
+# Role a member can have in a community
+enum MemberRole {
+  OWNER
+  ADMIN
+  MODERATOR
+  MEMBER
+}
 
-  type CommunityMember {
-    id: ID!
-    user: User!
-    community: Community!
-    role: MemberRole!
-    status: MemberRequestStatus!
-    joinedAt: Date
-    requestedAt: Date!
-  }
+# Status of membership request
+enum MemberRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
 
-  type CommunityPost {
-    id: ID!
-    type: PostType!
-    title: String!
-    content: String
-    imageUrls: [String]
-    videoUrl: String
-    linkUrl: String
-    linkTitle: String
-    linkDescription: String
-    linkImageUrl: String
-    isPaid: Boolean!
-    price: Float
-    currency: String
-    author: User!
-    community: Community!
-    likesCount: Int!
-    commentsCount: Int!
-    sharesCount: Int!
-    isLiked: Boolean!
-    isBookmarked: Boolean!
-    eventDetails: EventDetails
-    tags: [String]
-    createdAt: Date!
-    updatedAt: Date!
-  }
+# Membership record linking user to a community
+type CommunityMember {
+  id: ID!
+  user: User!
+  community: Community!
+  role: MemberRole!
+  status: MemberRequestStatus!
+  joinedAt: Date                  # When the member was approved
+  requestedAt: Date!             # When the join request was made
+}
 
-  enum PostType {
-    TEXT
-    IMAGE
-    VIDEO
-    LINK
-    EVENT
-    EDUCATIONAL
-    POLL
-  }
+# Post in a community
+type CommunityPost {
+  id: ID!
+  type: PostType!               # Content type (text, image, video, etc.)
+  title: String!
+  content: String
+  imageUrls: [String]           # For image posts
+  videoUrl: String              # For video posts
+  linkUrl: String               # For link previews
+  linkTitle: String
+  linkDescription: String
+  linkImageUrl: String
+  isPaid: Boolean!
+  price: Float
+  currency: Currency
+  author: User!
+  community: Community!
+  likesCount: Int!
+  commentsCount: Int!
+  sharesCount: Int!
+  isLiked: Boolean!             # Is this post liked by current user
+  isBookmarked: Boolean!        # Is this post bookmarked by current user
+  eventDetails: EventDetails    # If type is EVENT
+  tags: [String]                # Hashtags or keywords
+  createdAt: Date!
+  updatedAt: Date!
+}
 
-  type EventDetails {
-    startDate: Date!
-    endDate: Date
-    eventType: EventType!
-    location: Location
-    onlineLink: String
-    registrationRequired: Boolean!
-    maxAttendees: Int
-    registrationCount: Int!
-    registrationDeadline: Date
-    isRegistered: Boolean!
-    ticketPrice: Float
-    currency: String
-    agenda: String
-    requirements: String
-  }
+# Type of post supported
+enum PostType {
+  TEXT
+  IMAGE
+  VIDEO
+  LINK
+  EVENT
+  EDUCATIONAL
+  POLL
+}
 
-  enum EventType {
-    OFFLINE
-    ONLINE
-    HYBRID
-  }
+# Details specific to event posts
+type EventDetails {
+  startDate: Date!
+  endDate: Date
+  eventType: EventType!
+  location: Location
+  onlineLink: String
+  registrationRequired: Boolean!
+  maxAttendees: Int
+  registrationCount: Int!
+  registrationDeadline: Date
+  isRegistered: Boolean!         # Is the current user registered
+  ticketPrice: Float
+  currency: Currency
+  agenda: String
+  requirements: String
+}
 
-  type PaginationInfo {
-    hasNextPage: Boolean!
-    hasPreviousPage: Boolean!
-    totalCount: Int!
-    cursor: String
-  }
+# Event format enum
+enum EventType {
+  OFFLINE
+  ONLINE
+  HYBRID
+}
 
-  type CommunitiesConnection {
-    edges: [CommunityEdge!]!
-    pageInfo: PaginationInfo!
-  }
+# Pagination type for all connections
+type PaginationInfo {
+  hasNextPage: Boolean!
+  hasPreviousPage: Boolean!
+  totalCount: Int!
+  cursor: String
+}
 
-  type CommunityEdge {
-    node: Community!
-    cursor: String!
-  }
+# Paginated community list
+type CommunitiesConnection {
+  edges: [CommunityEdge!]!
+  pageInfo: PaginationInfo!
+}
 
-  type CommunityMembersConnection {
-    edges: [CommunityMemberEdge!]!
-    pageInfo: PaginationInfo!
-  }
+type CommunityEdge {
+  node: Community!
+  cursor: String!
+}
 
-  type CommunityMemberEdge {
-    node: CommunityMember!
-    cursor: String!
-  }
+# Paginated member list
+type CommunityMembersConnection {
+  edges: [CommunityMemberEdge!]!
+  pageInfo: PaginationInfo!
+}
 
-  type CommunityWallConnection {
-    edges: [CommunityPostEdge!]!
-    pageInfo: PaginationInfo!
-  }
+type CommunityMemberEdge {
+  node: CommunityMember!
+  cursor: String!
+}
 
-  type CommunityPostEdge {
-    node: CommunityPost!
-    cursor: String!
-  }
+# Paginated wall posts list
+type CommunityWallConnection {
+  edges: [CommunityPostEdge!]!
+  pageInfo: PaginationInfo!
+}
 
-  input CommunityFilters {
-    interests: [ID!]
-    location: LocationInput
-    radius: Float
-    isPaid: Boolean
-    isPrivate: Boolean
-    memberCountMin: Int
-    memberCountMax: Int
-    sortBy: CommunitySortBy
-    sortOrder: SortOrder
-  }
+type CommunityPostEdge {
+  node: CommunityPost!
+  cursor: String!
+}
 
-  input LocationInput {
-    latitude: Float!
-    longitude: Float!
-    address: String
-    city: String
-    state: String
-    country: String
-    zipCode: String
-  }
+# Filters for discovering communities
+input CommunityFilters {
+  interests: [ID!]
+  location: LocationInput
+  radius: Float  # In kilometers
+  isPaid: Boolean
+  isPrivate: Boolean
+  memberCountMin: Int
+  memberCountMax: Int
+  sortBy: CommunitySortBy
+  sortOrder: SortOrder
+}
 
-  enum CommunitySortBy {
-    CREATED_AT
-    MEMBER_COUNT
-    ACTIVITY
-    DISTANCE
-    RELEVANCE
-  }
+input LocationInput {
+  latitude: Float!
+  longitude: Float!
+}
 
-  enum SortOrder {
-    ASC
-    DESC
-  }
+enum CommunitySortBy {
+  CREATED_AT
+  MEMBER_COUNT
+  ACTIVITY
+  DISTANCE
+  RELEVANCE
+}
 
-  input CreateCommunityInput {
-    name: String!
-    description: String!
-    imageUrl: Upload
-    coverImageUrl: Upload
-    isPrivate: Boolean! = false
-    isPaid: Boolean! = false
-    price: Float
-    currency: String = "USD"
-    location: LocationInput
-    interests: [ID!]!
-  }
+enum SortOrder {
+  ASC
+  DESC
+}
 
-  input UpdateCommunityInput {
-    name: String
-    description: String
-    imageUrl: String
-    coverImageUrl: String
-    isPrivate: Boolean
-    isPaid: Boolean
-    price: Float
-    currency: String
-    location: LocationInput
-    interests: [ID!]
-  }
+# Input for creating a community
+input CreateCommunityInput {
+  name: String!
+  description: String!
+  imageUrl: Upload
+  coverImageUrl: Upload
+  isPrivate: Boolean! = false
+  isPaid: Boolean! = false
+  price: Float
+  currency: Currency = "USD"
+  location: LocationInput!
+  interests: [ID!]!
+}
 
-  input CreateCommunityPostInput {
-    communityId: ID!
-    type: PostType!
-    title: String!
-    content: String
-    imageUrls: [String]
-    videoUrl: String
-    linkUrl: String
-    isPaid: Boolean! = false
-    price: Float
-    currency: String = "USD"
-    eventDetails: EventDetailsInput
-    tags: [String]
-  }
+# Input for updating a community
+input UpdateCommunityInput {
+  name: String
+  description: String
+  imageUrl: Upload
+  coverImageUrl: Upload
+  isPrivate: Boolean
+  isPaid: Boolean
+  price: Float
+  currency: Currency
+  location: LocationInput
+  interests: [ID!]
+}
 
-  input EventDetailsInput {
-    startDate: Date!
-    endDate: Date
-    eventType: EventType!
-    location: LocationInput
-    onlineLink: String
-    registrationRequired: Boolean! = false
-    maxAttendees: Int
-    registrationDeadline: Date
-    ticketPrice: Float
-    currency: String = "USD"
-    agenda: String
-    requirements: String
-  }
+# Input for creating posts
+input CreateCommunityPostInput {
+  communityId: ID!
+  type: PostType!
+  title: String!
+  content: String
+  imageUrls: [String]
+  videoUrl: String
+  linkUrl: String
+  isPaid: Boolean! = false
+  price: Float
+  currency: Currency = "USD"
+  eventDetails: EventDetailsInput
+  tags: [String]
+}
 
-  type Query {
-    # Community Discovery
-    discoverCommunities(
-      first: Int = 20
-      after: String
-      filters: CommunityFilters
-    ): CommunitiesConnection!
+input EventDetailsInput {
+  startDate: Date!
+  endDate: Date
+  eventType: EventType!
+  location: LocationInput
+  onlineLink: String
+  registrationRequired: Boolean! = false
+  maxAttendees: Int
+  registrationDeadline: Date
+  ticketPrice: Float
+  currency: Currency = "USD"
+  agenda: String
+  requirements: String
+}
 
-    searchCommunities(
-      query: String!
-      first: Int = 20
-      after: String
-      filters: CommunityFilters
-    ): CommunitiesConnection!
+# Query operations
+type Query {
+  discoverCommunities(first: Int = 20, after: String, filters: CommunityFilters): CommunitiesConnection!
+  searchCommunities(query: String!, first: Int = 20, after: String, filters: CommunityFilters): CommunitiesConnection!
+  myJoinedCommunities(first: Int = 20, after: String, status: MemberRequestStatus): CommunitiesConnection! 
+  myOwnedCommunities(first: Int = 20, after: String): CommunitiesConnection!
+  community(id: ID!): Community
+  communityMembers(communityId: ID!, first: Int = 20, after: String, role: MemberRole, status: MemberRequestStatus): CommunityMembersConnection!
+  pendingMemberRequests(communityId: ID!, first: Int = 20, after: String): CommunityMembersConnection!
+  communityWall(communityId: ID!, first: Int = 20, after: String, postType: PostType): CommunityWallConnection!
+  trendingCommunities(first: Int = 10, timeframe: String = "week"): [Community!]!
+  recommendedCommunities(first: Int = 10): [Community!]!
+}
 
-    # My Communities
-    myJoinedCommunities(
-      first: Int = 20
-      after: String
-    ): CommunitiesConnection!
+# Mutation operations
+type Mutation {
+  createCommunity(input: CreateCommunityInput!): Community!
+  updateCommunity(id: ID!, input: UpdateCommunityInput!): Community!
+  deleteCommunity(id: ID!): GenericResponse!
 
-    myOwnedCommunities(
-      first: Int = 20
-      after: String
-    ): CommunitiesConnection!
+  joinCommunity(communityId: ID!): GenericResponse!
+  leaveCommunity(communityId: ID!): GenericResponse!
 
-    # Community Details
-    community(id: ID!): Community
-    communityBySlug(slug: String!): Community
+  approveMemberRequest(communityId: ID!, userId: ID!): GenericResponse!
+  rejectMemberRequest(communityId: ID!, userId: ID!): GenericResponse!
 
-    # Community Members
-    communityMembers(
-      communityId: ID!
-      first: Int = 20
-      after: String
-      role: MemberRole
-      status: MemberRequestStatus
-    ): CommunityMembersConnection!
+  assignMemberRole(communityId: ID!, userId: ID!, role: MemberRole!): GenericResponse!
+  removeMemberRole(communityId: ID!, userId: ID!): GenericResponse!
 
-    # Pending Member Requests (for owners/admins)
-    pendingMemberRequests(
-      communityId: ID!
-      first: Int = 20
-      after: String
-    ): CommunityMembersConnection!
+  banMember(communityId: ID!, userId: ID!, reason: String): GenericResponse!
+  unbanMember(communityId: ID!, userId: ID!): GenericResponse!
 
-    # Community Wall
-    communityWall(
-      communityId: ID!
-      first: Int = 20
-      after: String
-      postType: PostType
-    ): CommunityWallConnection!
+  createCommunityPost(input: CreateCommunityPostInput!): CommunityPost!
+  updateCommunityPost(id: ID!, input: CreateCommunityPostInput!): CommunityPost!
+  deleteCommunityPost(id: ID!): Boolean!
 
-    # Trending Communities
-    trendingCommunities(
-      first: Int = 10
-      timeframe: String = "week"
-    ): [Community!]!
+  likeCommunityPost(postId: ID!): GenericResponse!
+  unlikeCommunityPost(postId: ID!): GenericResponse!
+  bookmarkCommunityPost(postId: ID!): GenericResponse!
+  unbookmarkCommunityPost(postId: ID!): GenericResponse!
 
-    # Recommended Communities
-    recommendedCommunities(
-      first: Int = 10
-    ): [Community!]!
-  }
-
-  type Mutation {
-    # Community Management
-    createCommunity(input: CreateCommunityInput!): Community!
-    updateCommunity(id: ID!, input: UpdateCommunityInput!): Community!
-    deleteCommunity(id: ID!): Boolean!
-
-    # Community Membership
-    joinCommunity(communityId: ID!): Boolean!
-    leaveCommunity(communityId: ID!): Boolean!
-    
-    # Member Request Management (for private communities)
-    approveMemberRequest(communityId: ID!, userId: ID!): Boolean!
-    rejectMemberRequest(communityId: ID!, userId: ID!): Boolean!
-    
-    # Member Role Management
-    assignMemberRole(communityId: ID!, userId: ID!, role: MemberRole!): Boolean!
-    removeMemberRole(communityId: ID!, userId: ID!): Boolean!
-    
-    # Ban/Unban Members
-    banMember(communityId: ID!, userId: ID!, reason: String): Boolean!
-    unbanMember(communityId: ID!, userId: ID!): Boolean!
-
-    # Community Posts
-    createCommunityPost(input: CreateCommunityPostInput!): CommunityPost!
-    updateCommunityPost(id: ID!, input: CreateCommunityPostInput!): CommunityPost!
-    deleteCommunityPost(id: ID!): Boolean!
-
-    # Post Interactions
-    likeCommunityPost(postId: ID!): Boolean!
-    unlikeCommunityPost(postId: ID!): Boolean!
-    bookmarkCommunityPost(postId: ID!): Boolean!
-    unbookmarkCommunityPost(postId: ID!): Boolean!
-
-    # Event Registration
-    registerForEvent(postId: ID!): Boolean!
-    unregisterFromEvent(postId: ID!): Boolean!
-  }
+  registerForEvent(postId: ID!): GenericResponse!
+  unregisterFromEvent(postId: ID!): GenericResponse!
+}

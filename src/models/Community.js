@@ -51,19 +51,14 @@ module.exports = (sequelize, Sequelize) => {
             type: Sequelize.INTEGER,
             defaultValue: 0
         },
-        // Location as JSONB
-        location: {
-            type: Sequelize.JSONB,
-            defaultValue: {}
+        latitude:{
+            type: Sequelize.FLOAT,
+            allowNull: false
         },
-        // ownerId: {
-        //     type: Sequelize.UUID,
-        //     allowNull: false,
-        //     references: {
-        //         model: User,
-        //         key: 'id'
-        //     }
-        // },
+        longitude:{
+            type: Sequelize.FLOAT,
+            allowNull: false
+        },
         // Settings as JSONB
         settings: {
             type: Sequelize.JSONB,
@@ -90,22 +85,28 @@ module.exports = (sequelize, Sequelize) => {
     }, {
         timestamps: true,
         indexes: [
+            // For efficient filtering by ownerId + pagination
             {
-                name: 'idx_community_location_gin',
-                using: 'gin',
-                fields: ['location']
+              name: 'idx_community_owner_createdAt',
+              fields: ['ownerId', 'createdAt']
+            },
+            // Used for quick filtering/sorting
+            {
+              name: 'idx_community_visibility_payment',
+              fields: ['isPrivate', 'isPaid']
             },
             {
-                fields: ['ownerId']
+              name: 'idx_community_memberCount',
+              fields: ['memberCount']
             },
             {
-                fields: ['isPrivate', 'isPaid']
+              name: 'idx_community_lastActivity',
+              fields: ['lastActivityAt']
             },
             {
-                fields: ['memberCount']
-            },
-            {
-                fields: ['lastActivityAt']
+              name: 'idx_community_slug',
+              unique: true,
+              fields: ['slug']
             }
         ]
     });

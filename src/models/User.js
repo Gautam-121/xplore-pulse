@@ -13,10 +13,22 @@ module.exports = (sequelize, Sequelize) => {
           type: Sequelize.STRING(5),
           allowNull: true,
         },
+        pendingPhoneNumber: {
+          type: Sequelize.STRING(20),
+          allowNull: true,
+        },
+        pendingContryCode: {
+          type: Sequelize.STRING(5),
+          allowNull: true,
+        },
         email: {
           type: Sequelize.STRING(255),
           allowNull: true,
           unique: true,
+        },
+        pendingEmail:{
+          type: Sequelize.STRING(255),
+          allowNull: true
         },
         googleId: {
           type: Sequelize.STRING,
@@ -31,9 +43,13 @@ module.exports = (sequelize, Sequelize) => {
           type: Sequelize.TEXT,
           validate: { len: [0, 500] }
         },
-        location: {
-          type: Sequelize.JSONB,
-          defaultValue: {}
+        latitude:{
+          type: Sequelize.FLOAT,
+          allowNull: true
+        },
+        longitude:{
+          type: Sequelize.FLOAT,
+          allowNull: true
         },
         profileImageUrl: {
           type: Sequelize.TEXT,
@@ -91,15 +107,15 @@ module.exports = (sequelize, Sequelize) => {
         },
         emailNotificationsEnabled: {
           type: Sequelize.BOOLEAN,
-          defaultValue: false,
+          defaultValue: true,
         },
         communityUpdatesEnabled: {
           type: Sequelize.BOOLEAN,
-          defaultValue: false,
+          defaultValue: true,
         },
         eventRemindersEnabled: {
           type: Sequelize.BOOLEAN,
-          defaultValue: false,
+          defaultValue: true,
         },
         lastActiveAt: {
           type: Sequelize.DATE,
@@ -119,11 +135,6 @@ module.exports = (sequelize, Sequelize) => {
           },
           {
             fields: ['isActive', 'deletedAt']
-          },
-          {
-            name: 'idx_user_location_gin',
-            using: 'gin',
-            fields: ['location']
           }
         ],
         scopes: {
@@ -147,6 +158,15 @@ module.exports = (sequelize, Sequelize) => {
         publicFields.forEach(field => {
           profile[field] = this[field];
         });
+        // Add location as { latitude, longitude }
+        if (this.location && this.location.coordinates) {
+          profile.location = {
+            latitude: this.location.coordinates[1],
+            longitude: this.location.coordinates[0]
+          };
+        } else {
+          profile.location = null;
+        }
         return profile;
       };
     
