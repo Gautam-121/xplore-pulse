@@ -17,7 +17,7 @@ enum DeviceType {
 
 # Representation of a user's active session
 type AuthSession {
-  id: ID!
+  id: UUID!
   deviceId: String!           # Unique identifier for the device
   deviceType: DeviceType!     # iOS, Android, or Web
   deviceName: String          # Human-readable device name (e.g., "iPhone 14 Pro")

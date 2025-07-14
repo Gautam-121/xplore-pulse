@@ -11,6 +11,8 @@ scalar Upload
 # A scalar representing date only (without time)
 scalar Date
 
+scalar UUID
+
 # ------------------------------
 # ROOT TYPE DEFINITIONS
 # ------------------------------
@@ -23,9 +25,16 @@ type Query {
 
 # Root Mutation type – extend this in feature-specific modules
 # Placeholder field allows schema to remain valid if no mutations are defined
-type Mutation {
-  _: Boolean
+extend type Mutation {
+  uploadFile(file: Upload!): FileUploadResponse!
 }
+
+# Response type for file uploads
+ type FileUploadResponse {
+   success: Boolean!
+   url: String
+   message: String
+ }
 
 # ------------------------------
 # COMMON RESPONSE TYPE

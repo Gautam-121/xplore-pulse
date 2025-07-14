@@ -3,6 +3,7 @@ const db = require("../config/dbConfig")
 const { GraphQLError } = require("graphql");
 const userService = require('../services/userService');
 const ValidationService = require('../utils/validation');
+const fileUploadService = require('../services/fileUploadService');
 const logger = require("../utils/logger")
 
 const userResolvers = {
@@ -22,7 +23,7 @@ const userResolvers = {
   Mutation: {
     completeProfileSetup: requireAuth(async (_, { input }, { user, ipAddress, userAgent }) => {
       try {
-        let { name: rawName, bio: rawBio, profileImage, email: rawEmail, location } = input;
+        let { name: rawName, bio: rawBio, profileImageUrl, email: rawEmail, location } = input;
         // Sanitize inputs
         const name = ValidationService.sanitizeName(rawName);
         const bio = ValidationService.sanitizeBio(rawBio);
@@ -38,13 +39,14 @@ const userResolvers = {
           ValidationService.validateLongitude(location.longitude);
         }
 
-        if(profileImage){
-          profileImage = await profileImage
+        // Validate image URL if provided
+        if (profileImageUrl) {
+          ValidationService.validateImageUrl(profileImageUrl, 'profileImageUrl');
         }
 
         return await userService.completeProfileSetup(
           user.id,
-          { name, bio, email, profileImage, location: geoLocation },
+          { name, bio, profileImageUrl, email, location: geoLocation },
           ipAddress,
           userAgent
         );
@@ -212,22 +214,19 @@ const userResolvers = {
         const sanitizedInput = {
           name: input.name ? ValidationService.sanitizeName(input.name) : undefined,
           bio: input.bio ? ValidationService.sanitizeBio(input.bio) : undefined,
-          profileImage: input.profileImage,
+          profileImageUrl: input.profileImageUrl,
           removeProfileImage: !!input.removeProfileImage,
         };
         if (sanitizedInput.name) ValidationService.validateName(sanitizedInput.name);
         if (sanitizedInput.bio) ValidationService.validateBio(sanitizedInput.bio);
-        if (input.location && typeof input.location.latitude === 'number' && typeof input.location.longitude === 'number') {
-          ValidationService.validateLatitude(input.location.latitude);
-          ValidationService.validateLongitude(input.location.longitude);
-          sanitizedInput.location = input.location;
-        }
-        if(input.profileImage){
-          input.profileImage = await input.profileImage
+
+        // Validate image URL if provided
+        if (sanitizedInput.profileImageUrl) {
+          ValidationService.validateImageUrl(sanitizedInput.profileImageUrl, 'profileImageUrl');
         }
 
+        // Pass to service
         return await userService.updateUserProfile(user.id, sanitizedInput);
-
       } catch (error) {
         logger.error('updateUserProfile resolver failed', {
           userId: user.id,
@@ -278,6 +277,32 @@ const userResolvers = {
         if (error instanceof GraphQLError) throw error;
         throw new GraphQLError('Failed to schedule account deletion', {
           extensions: { code: 'INTERNAL_SERVER_ERROR' },
+        });
+      }
+    }),
+
+    uploadFile: requireAuth(async (_, { file }, context) => {
+      try {
+        if (!file) {
+          throw new GraphQLError('No file provided.', {
+            extensions: { code: 'NO_FILE_PROVIDED' }
+          });
+        }
+        const fileObj = await file;
+        // Validate image file before uploading
+        await fileUploadService.validateImageFile(fileObj.file);
+        const url = await fileUploadService.uploadFile(fileObj.file);
+        return {
+          success: true,
+          url,
+          message: 'File uploaded successfully.'
+        };
+      } catch (error) {
+        context.logger?.error?.('uploadFile mutation failed', { error });
+        // If already a GraphQLError, just throw it
+        if (error instanceof GraphQLError) throw error;
+        throw new GraphQLError(error?.message || 'File upload failed.', {
+          extensions: { code: 'FILE_UPLOAD_FAILED' }
         });
       }
     })

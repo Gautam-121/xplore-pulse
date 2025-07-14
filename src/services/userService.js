@@ -40,9 +40,8 @@ class UserService {
 
     async completeProfileSetup(userId, input, ipAddress, userAgent) {
         const transaction = await this.sequelize.transaction();
-        let uploadedFileUrl = null;
         try {
-            const { name, bio, profileImage, email, location } = input;
+            const { name, bio, profileImageUrl, email, location } = input;
             logger.info('Starting profile setup', { userId });
 
             const userRecord = await this.UserModel.findByPk(userId, { transaction });
@@ -61,7 +60,7 @@ class UserService {
             }
 
             if(email && ((userRecord.email && userRecord.isEmailVerified) && (userRecord.email && userRecord.googleId))){
-                throw new GraphQLError("Can't change the verified email in profile setup", {
+                throw new GraphQLError("Can't change the verifiedemail in profile setup", {
                     extensions: { code: "BAD_REQUEST"}
                 })
             }
@@ -77,10 +76,6 @@ class UserService {
                     throw new GraphQLError('Latitude is required when longitude is provided', {
                         extensions: { code: 'BAD_USER_INPUT' },
                     });
-                }
-                if (location.latitude && location.longitude) {
-                    updateData.latitude = location.latitude;
-                    updateData.longitude = location.longitude;
                 }
             }
 
@@ -104,29 +99,9 @@ class UserService {
                 onboardingStep: email ? 'PROFILE_SETUP' : 'INTERESTS_SELECTION',
             };
 
-            // Profile image handling
-            if (profileImage) {
-                fileUploadService.validateImageFile(profileImage.file);
-                try {
-                    uploadedFileUrl = await fileUploadService.uploadFile(
-                        profileImage.file,
-                        'profile-images'
-                    );
-                    updateData.profileImageUrl = uploadedFileUrl;
-                    logger.info('Profile image uploaded', { userId });
-                } catch (uploadErr) {
-                    logger.error('Profile image upload failed', {
-                        userId,
-                        error: uploadErr.message,
-                    });
-                    throw new GraphQLError('Failed to upload profile image', {
-                        extensions: { code: 'BAD_USER_INPUT' },
-                    });
-                }
-            }
-
             // Update user
             if (email) updateData.email = email;
+            if(profileImageUrl) updateData.profileImageUrl = profileImageUrl
             await userRecord.update(updateData, { transaction });
 
             // Email verification
@@ -147,17 +122,6 @@ class UserService {
         } catch (error) {
             if (transaction && !transaction.finished) {
                 await transaction.rollback();
-            }
-            if (uploadedFileUrl) {
-                try {
-                    await fileUploadService.deleteFile(uploadedFileUrl);
-                    logger.info('Uploaded profile image rolled back', { uploadedFileUrl });
-                } catch (cleanupErr) {
-                    logger.warn('Failed to delete uploaded image during rollback', {
-                        fileUrl: uploadedFileUrl,
-                        error: cleanupErr.message,
-                    });
-                }
             }
             logger.error('Profile setup failed', { userId, error: error.message });
             if (error instanceof GraphQLError) throw error;
@@ -724,10 +688,9 @@ class UserService {
 
     async updateUserProfile(userId, input) {
         const transaction = await this.sequelize.transaction();
-        let uploadedFileUrl = null;
         try {
             logger.info('Starting profile update', { userId });
-            const { name, bio, profileImage, removeProfileImage, location } = input;
+            const { name, bio, profileImageUrl, removeProfileImage, location } = input;
 
             if (location) {
                 if (location.latitude && !location.longitude) {
@@ -778,51 +741,30 @@ class UserService {
                         imageUrl: user.profileImageUrl,
                         error: err.message,
                     });
-
-                    if (!profileImage?.file) {
-                        throw new GraphQLError('Failed to delete existing image', {
-                            extensions: { code: 'FILE_DELETE_FAILED' },
-                        });
-                    }
+                    throw new GraphQLError('Failed to delete existing image', {
+                        extensions: { code: 'FILE_DELETE_FAILED' },
+                    });
                 }
             }
 
-            // Handle new profile image upload
-            if (profileImage?.file) {
-                try {
-                    fileUploadService.validateImageFile(profileImage.file);
-
-                    if (user.profileImageUrl) {
-                        try {
-                            await fileUploadService.deleteFile(user.profileImageUrl);
-                            logger.info('Deleted previous profile image before new upload', {
-                                userId,
-                                oldImageUrl: user.profileImageUrl,
-                            });
-                        } catch (deleteErr) {
-                            logger.warn('Failed to delete previous image', {
-                                userId,
-                                error: deleteErr.message,
-                            });
-                        }
+            // Handle new profile image URL
+            if (profileImageUrl) {
+                // Optionally, delete old image if replacing
+                if (user.profileImageUrl && user.profileImageUrl !== profileImageUrl) {
+                    try {
+                        await fileUploadService.deleteFile(user.profileImageUrl);
+                        logger.info('Deleted previous profile image before new URL', {
+                            userId,
+                            oldImageUrl: user.profileImageUrl,
+                        });
+                    } catch (deleteErr) {
+                        logger.warn('Failed to delete previous image', {
+                            userId,
+                            error: deleteErr.message,
+                        });
                     }
-
-                    uploadedFileUrl = await fileUploadService.uploadFile(profileImage.file, 'profile-images');
-                    updateData.profileImageUrl = uploadedFileUrl;
-
-                    logger.info('New profile image uploaded', {
-                        userId,
-                        imageUrl: uploadedFileUrl,
-                    });
-                } catch (uploadErr) {
-                    logger.error('Profile image upload failed', {
-                        userId,
-                        error: uploadErr.message,
-                    });
-                    throw new GraphQLError('Failed to upload profile image', {
-                        extensions: { code: 'FILE_UPLOAD_FAILED' },
-                    });
                 }
+                updateData.profileImageUrl = profileImageUrl;
             }
 
             // Handle geospatial location
@@ -847,29 +789,10 @@ class UserService {
             if (transaction && !transaction.finished) {
                 await transaction.rollback();
             }
-
-            // Cleanup image if failed during upload flow
-            if (uploadedFileUrl) {
-                try {
-                    await fileUploadService.deleteFile(uploadedFileUrl);
-                    logger.info('Rolled back uploaded profile image', {
-                        userId,
-                        imageUrl: uploadedFileUrl,
-                    });
-                } catch (cleanupErr) {
-                    logger.warn('Rollback image cleanup failed', {
-                        userId,
-                        imageUrl: uploadedFileUrl,
-                        error: cleanupErr.message,
-                    });
-                }
-            }
-
             logger.error('Unexpected error during profile update', {
                 userId,
                 error: error.message,
             });
-
             if (error instanceof GraphQLError) throw error;
             throw new GraphQLError('Failed to update user profile', {
                 extensions: { code: 'INTERNAL_SERVER_ERROR' },

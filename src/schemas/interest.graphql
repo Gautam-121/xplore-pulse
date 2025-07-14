@@ -4,7 +4,7 @@
 
 # Represents an individual user interest (e.g., Technology, Travel)
 type Interest {
-  id: ID!
+  id: UUID!
   name: String!                  # Display name of the interest
   slug: String!                  # URL-friendly unique identifier
   description: String            # Optional longer description

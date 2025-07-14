@@ -6,10 +6,9 @@ const logger = require("../utils/logger");
 
 const resolvers = {
     Query: {
-      discoverCommunities: async (parent, args, context) => {
+      discoverCommunities: requireAuth(async (parent, args, context) => {
         const { user, loaders } = context;
         const { first, after, filters } = args;
-        
         try {
           const result = await communityService.discoverCommunities({
             userId: user.id,
@@ -43,12 +42,11 @@ const resolvers = {
             extensions: { code: 'INTERNAL_SERVER_ERROR' }
           });
         }
-      },
+      }),
   
-      searchCommunities: async (parent, args, context) => {
+      searchCommunities: requireAuth(async (parent, args, context) => {
         const { user } = context;
         const { query, first, after, filters } = args;
-        
         return await communityService.searchCommunities({
           userId: user.id,
           query,
@@ -56,17 +54,36 @@ const resolvers = {
           cursor: after,
           filters: filters || {}
         });
-      },
+      }),
   
       myJoinedCommunities: requireAuth(async (parent, args, context) => {
         const { user } = context;
         const { first, after , status } = args;
-        return await communityService.getUserJoinedCommunities({
+        const result = await communityService.getUserJoinedCommunities({
           userId: user.id,
           limit: first,
           cursor: after,
           status: status
         });
+        // Log the first community node
+        if (result.edges.length > 0) {
+          console.log('First community node:', result.edges[0].node);
+        }
+        // Deep clone and force delete computed fields from all nodes
+        const deepClone = obj => JSON.parse(JSON.stringify(obj));
+        result.edges.forEach(edge => {
+          if (edge.node) {
+            const clone = deepClone(edge.node);
+            delete clone.isAdmin;
+            delete clone.isOwner;
+            delete clone.isModerator;
+            delete clone.canCreateEvents;
+            delete clone.canPost;
+            delete clone.membershipStatus;
+            edge.node = clone;
+          }
+        });
+        return result;
       }),
   
       myOwnedCommunities: requireAuth(async (parent, args, context) => {
@@ -85,6 +102,7 @@ const resolvers = {
         const { id } = args;
         const sanitizeCommunityId = ValidationService.sanitizeUUID(id)
         ValidationService.validateUUID(sanitizeCommunityId , "communityId")
+        await communityService.checkMembershipAccess(sanitizeCommunityId, user.id);
         return await communityService.getCommunityById(sanitizeCommunityId, user.id);
       }),
   
@@ -96,13 +114,13 @@ const resolvers = {
 
         // Check if user has permission to view members
         await communityService.checkMembershipAccess(sanitizeCommunityId, user.id);
-        return await communityService.getCommunityMembers({
+        return await communityService.getCommunityMembers(
           sanitizeCommunityId,
-          limit: first,
-          cursor: after,
+          first,
+          after,
           role,
           status
-        });
+        );
       }),
   
       pendingMemberRequests: requireAuth(async (parent, args, context) => {
@@ -113,49 +131,21 @@ const resolvers = {
         
         // Check if user is owner/admin
         await communityService.checkAdminAccess(sanitizeCommunityId, user.id);
-        return await communityService.getPendingMemberRequests({
+        return await communityService.getPendingMemberRequests(
           sanitizeCommunityId,
-          limit: first,
-          cursor: after
-        });
+          first,
+          after
+        );
       }),
-  
-      communityWall: requireAuth(async (parent, args, context) => {
-        const { user } = context;
-        const { communityId, first, after, postType } = args;
-        const sanitizeCommunityId = ValidationService.sanitizeUUID(communityId)
-        ValidationService.validateUUID(sanitizeCommunityId)
-        // Check if user has access to community wall
-        await communityService.checkWallAccess(sanitizeCommunityId, user.id);
-        return await communityService.getCommunityWall({
-          sanitizeCommunityId,
-          userId: user.id,
-          limit: first,
-          cursor: after,
-          postType
-        });
-      }),
-  
-      trendingCommunities: async (parent, args, context) => {
-        const { user } = context;
-        const { first, timeframe } = args;
-        
-        return await communityService.getTrendingCommunities({
-          userId: user.id,
-          limit: first,
-          timeframe
-        });
-      },
-  
-      recommendedCommunities: async (parent, args, context) => {
+
+      recommendedCommunities: requireAuth(async (parent, args, context) => {
         const { user } = context;
         const { first } = args;
-        
         return await communityService.getRecommendedCommunities({
           userId: user.id,
           limit: first
         });
-      }
+      })
     },
   
     Mutation: {
@@ -176,26 +166,27 @@ const resolvers = {
             });
           }
           ValidationService.validateArrayOfUUIDs(input?.interests, "interest")
-          ValidationService.validateLatitude(input.location?.latitude)
-          ValidationService.validateLongitude(input.location?.longitude)
+          if(input.location){
+            ValidationService.validateLatitude(input.location?.latitude)
+            ValidationService.validateLongitude(input.location?.longitude)
+          }
 
-          // Handle file uploads
-          let imageFile = null;
-          let coverImageFile = null;
+          // Validate imageUrl and coverImageUrl if provided
           if (input.imageUrl) {
-            imageFile = await input.imageUrl; // Await the Upload promise
+            ValidationService.validateImageUrl(input.imageUrl, 'imageUrl');
           }
           if (input.coverImageUrl) {
-            coverImageFile = await input.coverImageUrl;
+            ValidationService.validateImageUrl(input.coverImageUrl, 'coverImageUrl');
           }
+
+          // New: Expect imageUrl and coverImageUrl as URLs (strings), not Uploads
+          // The client should upload files first using uploadFile mutation, then pass the URLs here
 
           // Create community with owner ID
           const communityData = {
             ...input,
             name: sanitizeName,
             description: sanitizeDescription,
-            imageFile,
-            coverImageFile,
             ownerId: context.user.id,
             userId: context.user.id
           };
@@ -258,23 +249,22 @@ const resolvers = {
             }
           }
 
-          // Handle file uploads
-          let imageFile = null;
-          let coverImageFile = null;
+          // Validate imageUrl and coverImageUrl if provided
           if (input.imageUrl) {
-            imageFile = await input.imageUrl; // Await the Upload promise
+            ValidationService.validateImageUrl(input.imageUrl, 'imageUrl');
           }
           if (input.coverImageUrl) {
-            coverImageFile = await input.coverImageUrl;
+            ValidationService.validateImageUrl(input.coverImageUrl, 'coverImageUrl');
           }
+
+          // New: Expect imageUrl and coverImageUrl as URLs (strings), not Uploads
+          // The client should upload files first using uploadFile mutation, then pass the URLs here
 
           // Check if user is owner
           await communityService.checkOwnerAccess(sanitizeId, user.id);
 
           return await communityService.updateCommunity(sanitizeId, {
-            ...input,
-            imageFile,
-            coverImageFile
+            ...input
           }, user.id);
         } catch (error) {
           logger.error('Community updation error:', { error });
@@ -596,30 +586,12 @@ const resolvers = {
         }
       }),
   
-      createCommunityPost: async (parent, args, context) => {
-        const { user } = context;
-        const { input } = args;
-        
-        // Check if user can post in community
-        await communityService.checkPostAccess(input.communityId, user.id);
-        
-        return await communityService.createCommunityPost({
-          ...input,
-          authorId: user.id
-        });
-      },
-  
-      registerForEvent: async (parent, args, context) => {
-        const { user } = context;
-        const { postId } = args;
-        
-        return await communityService.registerForEvent(postId, user.id);
-      }
     },
   
     // Field Resolvers - Using DataLoaders for performance
     Community: {
       membershipStatus: async (parent, args, context) => {
+        console.log("MembershipStatus")
         const { user, loaders } = context;
         if (!user) return 'NOT_MEMBER';
         

@@ -85,6 +85,70 @@ class FileUploadService {
     });
   }
 
+  /**
+   * Helper to dynamically import file-type (ESM) in CommonJS context
+   */
+  async getFileType() {
+    if (!this._FileType) {
+      this._FileType = await import('file-type');
+    }
+    return this._FileType;
+  }
+
+  /**
+   * Validates an image file by checking its actual content (magic bytes) using file-type.
+   * Accepts file object with buffer or createReadStream. Throws if invalid.
+   */
+  async validateImageFile(file, maxSizeMB = 5) {
+    let buffer, filename;
+  
+    // 🧩 Extract buffer and filename
+    if (file) {
+      if (file.buffer) {
+        buffer = file.buffer;
+      } else if (typeof file.createReadStream === 'function') {
+        buffer = await this.streamToBuffer(file.createReadStream());
+      } else {
+        throw new GraphQLError('No buffer or stream found in file', {
+          extensions: { code: 'INVALID_FILE' }
+        });
+      }
+      filename = file.originalname || file.filename;
+    } else {
+      throw new GraphQLError('No file provided', {
+        extensions: { code: 'NO_FILE_PROVIDED' }
+      });
+    }
+  
+    // ✅ Dynamically import file-type module
+    const FileTypeModule = await this.getFileType();
+    const type = await FileTypeModule.fileTypeFromBuffer(buffer);
+  
+    // ✅ Only allow known image types
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
+    if (!type || !allowedTypes.includes(type.mime)) {
+      throw new GraphQLError('Invalid file type. Only JPEG, PNG, and WebP are allowed.', {
+        extensions: { code: 'INVALID_FILE_TYPE' }
+      });
+    }
+  
+    // ✅ Enforce size check
+    const maxSize = maxSizeMB * 1024 * 1024;
+    if (buffer.length > maxSize) {
+      throw new GraphQLError(`File too large. Maximum size is ${maxSizeMB}MB.`, {
+        extensions: { code: 'FILE_TOO_LARGE' }
+      });
+    }
+  
+    logger.info('✅ Image file validated (magic byte check)', {
+      filename,
+      detectedType: type.mime,
+      size: buffer.length
+    });
+  
+    return true;
+  }
+
   // Accepts buffer, GraphQL Upload, or base64 string
   async uploadFile(file, subDirectory = this.defaultSubDirectory) {
     try {
@@ -107,6 +171,8 @@ class FileUploadService {
       if (!buffer || !fileObj.filename && !fileObj.originalname) {
         throw new GraphQLError('Invalid file object', { extensions: { code: 'BAD_USER_INPUT' } });
       }
+      // Validate file content and size before upload
+      await this.validateImageFile({ ...fileObj, buffer });
       const originalName = fileObj.originalname || fileObj.filename;
       const fileName = this.generateUniqueFileName(originalName);
       const key = `/${subDirectory}/${fileName}`;
@@ -187,7 +253,8 @@ class FileUploadService {
       }
       
       // Remove leading slash if present
-      const objectKey = key.replace(new RegExp(`^/?${this.bucketName}/`), '');      
+      const objectKey = key.replace(new RegExp(`^/?${this.bucketName}/`), '');   
+      console.log("objectKey" , objectKey)   
       // Check if file exists before deletion
       try {
         await this.minioClient.statObject(this.bucketName , objectKey);
@@ -206,44 +273,6 @@ class FileUploadService {
       logger.error('FileUploadService.deleteFile failed', { error });
       throw new GraphQLError('Failed to delete file', { extensions: { code: 'FILE_DELETE_FAILED' } });
     }
-  }
-
-  validateImageFile(file, maxSizeMB = 5) {
-    let mimetype, size, filename;
-    if (file) {
-      if (typeof file.promise === 'function') {
-        return true;
-      } else if (file.mimetype && file.buffer) {
-        mimetype = file.mimetype;
-        size = file.buffer.length;
-        filename = file.originalname || file.filename;
-      } else if (file.mimetype && typeof file.createReadStream === 'function') {
-        mimetype = file.mimetype;
-        filename = file.filename;
-        size = null;
-      }
-    }
-    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
-    const maxSize = maxSizeMB * 1024 * 1024;
-    logger.debug('Validating image file', {
-      filename,
-      mimeType: mimetype,
-      size
-    });
-    if (!allowedTypes.includes(mimetype)) {
-      logger.warn('Invalid file type', { mimeType: mimetype });
-      throw new GraphQLError('Invalid file type. Only JPEG, PNG, and WebP are allowed.', {
-        extensions: { code: 'INVALID_FILE_TYPE' }
-      });
-    }
-    if (size !== null && size > maxSize) {
-      logger.warn('File too large', { fileSize: size, maxSize });
-      throw new GraphQLError(`File too large. Maximum size is ${maxSizeMB}MB.`, {
-        extensions: { code: 'FILE_TOO_LARGE' }
-      });
-    }
-    logger.info('Image file validated', { filename });
-    return true;
   }
 
   // List all files in the bucket/subdirectory

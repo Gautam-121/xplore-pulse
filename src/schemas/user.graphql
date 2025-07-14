@@ -4,7 +4,7 @@
 
 # Represents the authenticated user of the application
 type User {
-  id: ID!
+  id: UUID!
   phoneNumber: String!                     # User's registered phone number
   countryCode: String!                     # Country code for the phone number (e.g., +91)
   name: String                             # Full name of the user
@@ -22,19 +22,19 @@ type User {
   updatedAt: DateTime!                     # Last profile update timestamp
   lastActiveAt: DateTime!                  # Last time the user was active
   authTokens: AuthTokens                   # Optional: returned only on login/mutation
-  location: Location
+  # location: Location
 }
 
 # Geolocation structure
-type Location {
-  latitude: Float!
-  longitude: Float!
-}
+# type Location {
+#   latitude: Float!
+#   longitude: Float!
+# }
 
-input LocationInput {
-  latitude: Float!
-  longitude: Float!
-}
+# input LocationInput {
+#   latitude: Float!
+#   longitude: Float!
+# }
 
 # Enum representing user onboarding flow stages
 enum OnboardingStep {
@@ -61,18 +61,17 @@ type NotificationSettings {
 input ProfileSetupInput {
   name: String!
   bio: String!
-  profileImage: Upload                    # Image upload for profile picture
+  profileImageUrl: String   # URL of uploaded image (use uploadFile mutation first)
   email: String
-  location: LocationInput
+  # location: LocationInput
 }
 
 # Input for updating an existing user profile
 input UpdateProfileInput {
   name: String
   bio: String
-  profileImage: Upload                    # New profile picture to upload
-  removeProfileImage: Boolean             # Flag to remove current image
-  location: LocationInput
+  profileImageUrl: String   # URL of uploaded image (use uploadFile mutation first)
+  # location: LocationInput
 }
 
 # Input for updating notification preferences
@@ -139,7 +138,7 @@ type EmailOTPResponse {
 
 # Public version of the user profile (no sensitive data)
 type PublicUserProfile {
-  id: ID!
+  id: UUID!
   name: String
   bio: String
   profileImageUrl: String
@@ -170,7 +169,7 @@ type OTPRequestResponse {
 extend type Mutation {
   # --------- Onboarding ---------
   completeProfileSetup(input: ProfileSetupInput!): ProfileSetupResponse!
-  selectInterests(interestIds: [ID!]!): SelectInterestsResponse!
+  selectInterests(interestIds: [UUID!]!): SelectInterestsResponse!
   updateOnboardingStep(step: OnboardingStep!): UpdateOnboardingResponse!
 
   # --------- Profile Management ---------

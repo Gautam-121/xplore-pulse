@@ -53,11 +53,11 @@ module.exports = (sequelize, Sequelize) => {
         },
         latitude:{
             type: Sequelize.FLOAT,
-            allowNull: false
+            allowNull: true
         },
         longitude:{
             type: Sequelize.FLOAT,
-            allowNull: false
+            allowNull: true
         },
         // Settings as JSONB
         settings: {

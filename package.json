@@ -22,6 +22,7 @@
     "dataloader": "^2.2.3",
     "dotenv": "^16.5.0",
     "express": "^5.1.0",
+    "file-type": "^21.0.0",
     "google-auth-library": "^9.15.1",
     "graphql": "^16.11.0",
     "graphql-upload": "^17.0.0",

@@ -2,78 +2,17 @@ const db = require("../config/dbConfig")
 const Community = db.Community
 const CommunityMember = db.CommunityMember
 const CommunityPost = db.CommunityPost
-const PostLike = db.PostLike
-const PostBookmark = db.PostBookmark
 const CommunityInterest = db.CommunityInterest
-const EventRegistration = db.EventRegistration
 const User = db.User
 const Interest = db.Interest
 const sequelize = db.sequelize
 const fileUploadService = require("./fileUploadService")
 const mailerService = require('./mailerService');
-const { Op, Sequelize } = require("sequelize")
+const { Op } = require("sequelize")
 const { GraphQLError } = require('graphql');
 const logger = require('../utils/logger');
 
 const communityService = {
-    
-    // Helper methods with improved validation
-    validateInput(input, requiredFields) {
-        if (!input || typeof input !== 'object') {
-            throw new GraphQLError('Invalid input object', {
-                extensions: { code: "BAD_REQUEST_INPUT"}
-            });
-        }
-        
-        for (const field of requiredFields) {
-            if (!input[field] || (typeof input[field] === 'string' && !input[field].trim())) {
-                throw new GraphQLError(`${field} is required`, {
-                    extensions: { code: "BAD_REQUEST_INPUT", field }
-                });
-            }
-        }
-    },
-
-    validateUUID(uuid, fieldName) {
-        if (!uuid || typeof uuid !== 'string') {
-            throw new GraphQLError(`${fieldName} must be a valid string`, {
-                extensions: { code: "BAD_REQUEST_INPUT", field: fieldName }
-            });
-        }
-        
-        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-        if (!uuidRegex.test(uuid)) {
-            throw new GraphQLError(`Invalid ${fieldName} format`, {
-                extensions: { code: "BAD_REQUEST_INPUT", field: fieldName }
-            });
-        }
-    },
-
-    validateLocation(location) {
-        if (!location || typeof location !== 'object') {
-            throw new GraphQLError('Location must be an object with latitude and longitude', {
-                extensions: { code: "BAD_REQUEST_INPUT", field: 'location' }
-            });
-        }
-        
-        if (typeof location.latitude !== 'number' || typeof location.longitude !== 'number') {
-            throw new GraphQLError('Latitude and longitude must be numbers', {
-                extensions: { code: "BAD_REQUEST_INPUT", field: 'location' }
-            });
-        }
-
-        if (location.latitude < -90 || location.latitude > 90) {
-            throw new GraphQLError('Latitude must be between -90 and 90', {
-                extensions: { code: "BAD_REQUEST_INPUT", field: 'latitude' }
-            });
-        }
-
-        if (location.longitude < -180 || location.longitude > 180) {
-            throw new GraphQLError('Longitude must be between -180 and 180', {
-                extensions: { code: "BAD_REQUEST_INPUT", field: 'longitude' }
-            });
-        }
-    },
 
     // Helper method for slug sanitization with improved validation
     sanitizeSlug(name) {
@@ -95,10 +34,421 @@ const communityService = {
           .substring(0, 50); // Limit length
     },
 
-    // Method 7: Hybrid Approach (Recommended) with improved error handling
+    async checkMembershipAccess(communityId, userId) {
+        // Validate input
+        if (!communityId || !userId) {
+            throw new GraphQLError('Something went wrong. Please try again later.', {
+                extensions: { code: 'BAD_REQUEST_INPUT' }
+            });
+        }    
+        // Check community existence
+        const community = await Community.findByPk(communityId);
+        if (!community) {
+            throw new GraphQLError('The community you are trying to access does not exist.', {
+                extensions: { code: 'COMMUNITY_NOT_FOUND' }
+            });
+        }
+    
+        // Check membership
+        const membership = await CommunityMember.findOne({
+            where: { communityId, userId }
+        });
+    
+        if (!membership) {
+            throw new GraphQLError('You need to join this community to access its content.', {
+                extensions: { code: 'NOT_A_MEMBER' }
+            });
+        }
+    
+        if (membership.status === 'BANNED') {
+            throw new GraphQLError('You have been banned from this community.', {
+                extensions: { code: 'BANNED' }
+            });
+        }
+    
+        if (membership.status === 'REJECTED') {
+            throw new GraphQLError('Your request to join this community was rejected.', {
+                extensions: { code: 'REJECTED' }
+            });
+        }
+    
+        if (membership.status === 'PENDING') {
+            throw new GraphQLError('Your request to join this community is still pending approval.', {
+                extensions: { code: 'PENDING' }
+            });
+        }
+    
+        // Only APPROVED members allowed
+        return;
+    },
+
+    async notifyUserOfUnban(communityId, userId, transaction) {
+        try {
+            // Fetch user and community details
+            const user = await User.findByPk(userId, { transaction });
+            const community = await Community.findByPk(communityId, { transaction });
+            if (!user || !community) return;
+            // Compose email
+            const subject = `You have been unbanned from "${community.name}"`;
+            const message = `Hi ${user.name || user.email},\n\nYou have been unbanned from the community "${community.name}". You may now request to join again.\n\nBest regards,\nThe Xplore Pulse Team`;
+           if(user.email){
+             // Send email
+             await mailerService.sendEmail({
+                to: user.email,
+                subject,
+                text: message,
+            });
+           }
+        } catch (err) {
+            // Log but do not throw
+            console.error('Failed to send unban notification email:', err);
+        }
+    },
+
+    async notifyUserOfBan(communityId, userId, reason, transaction) {
+        try {
+            // Fetch user and community details
+            const user = await User.findByPk(userId, { transaction });
+            const community = await Community.findByPk(communityId, { transaction });
+            if (!user || !community) return;
+
+            // Compose email
+            const subject = `You have been banned from "${community.name}"`;
+            const message = `Hi ${user.name || user.email},\n\nYou have been banned from the community "${community.name}".${reason ? `\n\nReason: ${reason}` : ''}\n\nIf you believe this was a mistake, please contact the community owner.\n\nBest regards,\nThe Xplore Pulse Team`;
+
+            // Send email
+            if(user.email){
+                await mailerService.sendEmail({
+                    to: user.email,
+                    subject,
+                    text: message,
+                });
+            }
+        } catch (err) {
+            // Log but do not throw
+            console.error('Failed to send ban notification email:', err);
+        }
+    },
+
+    async notifyUserOfRoleRemoval(communityId, userId, transaction) {
+        try {
+            // Fetch user and community details
+            const user = await User.findByPk(userId, { transaction });
+            const community = await Community.findByPk(communityId, { transaction });
+            if (!user || !community) return;
+
+            // Compose email
+            const subject = `Your role in "${community.name}" has been removed`;
+            const message = `Hi ${user.name || user.email},\n\nYour special role in the community "${community.name}" has been removed. You are now a regular MEMBER.\n\nBest regards,\nThe Xplore Pulse Team`;
+            const html = `<p>Hi ${user.name || user.email},</p>\n<p>Your special role in the community <b>${community.name}</b> has been removed. You are now a regular <b>MEMBER</b>.</p>\n<p>Best regards,<br/>The Xplore Pulse Team</p>`;
+
+            // Send email
+            await mailerService.sendEmail({
+                to: user.email,
+                subject,
+                text: message,
+                html
+            });
+        } catch (err) {
+            // Log but do not throw
+            console.error('Failed to send role removal notification email:', err);
+        }
+    },
+
+    async notifyUserOfRoleChange(communityId, userId, role, transaction) {
+        try {
+            // Fetch user and community details
+            const user = await User.findByPk(userId, { transaction });
+            const community = await Community.findByPk(communityId, { transaction });
+            if (!user || !community) return;
+
+            // Compose email
+            const subject = `Your role in "${community.name}" has been updated to ${role}`;
+            const message = `Hi ${user.name || user.email},\n\nYour role in the community "${community.name}" has been updated to ${role}.\n\nBest regards,\nThe Xplore Pulse Team`;
+
+            if(user.email){
+                await mailerService.sendEmail({
+                    to: user.email,
+                    subject,
+                    text: message,
+                });
+            }
+        } catch (err) {
+            // Log but do not throw
+            console.error('Failed to send role change notification email:', err);
+        }
+    },
+
+    async notifyUserOfRejection(communityId, userId, transaction) {
+        try {
+            // Fetch user and community details
+            const user = await User.findByPk(userId, { transaction });
+            const community = await Community.findByPk(communityId, { transaction });
+            if (!user || !community) return;
+
+            // Compose email
+            const subject = `Your request to join "${community.name}" has been rejected`;
+            const message = `Hi ${user.name || user.email},\n\nWe regret to inform you that your request to join the community "${community.name}" has been rejected. You may try joining other communities or contact the community owner for more information.\n\nBest regards,\nThe Xplore Pulse Team`;
+
+            // Send email
+            if(user.email){
+                await mailerService.sendEmail({
+                    to: user.email,
+                    subject,
+                    text: message,
+                    html
+                });
+            }
+        } catch (err) {
+            // Log but do not throw
+            console.error('Failed to send rejection notification email:', err);
+        }
+    },
+
+    async notifyAdminsOfLeave(communityId, userId, transaction) {
+        // Send notifications to community admins (including owner) when a member leaves
+        try {
+            const admins = await CommunityMember.findAll({
+                where: {
+                    communityId,
+                    role: { [Op.in]: ['OWNER', 'ADMIN'] },
+                    status: 'APPROVED'
+                },
+                include: [{ model: User, as: 'user' }],
+                transaction
+            });
+            // Get user info for the leaver
+            const leaver = await User.findByPk(userId, { transaction });
+            // Send email to each admin/owner
+            for (const admin of admins) {
+                const adminUser = admin.user;
+                if (adminUser && adminUser.email) {
+                    try {
+                        await mailerService.sendEmail({
+                            to: adminUser.email,
+                            subject: `A member has left your community`,
+                            text: `User ${leaver ? leaver.name : userId} has left your community.`,
+                        });
+                    } catch (mailErr) {
+                        logger.error('Failed to send leave notification email to admin:', { mailErr, adminEmail: adminUser.email });
+                    }
+                }
+            }
+            logger.info('Leave notification sent to admins', { communityId, userId });
+        } catch (err) {
+            logger.error('Failed to notify admins of leave', { err, communityId, userId });
+        }
+    },
+    
+    async notifyAdminsOfNewRequest(communityId, userId, transaction) {
+        // Send notifications to community admins (including owner)
+        const admins = await CommunityMember.findAll({
+            where: {
+                communityId,
+                role: { [Op.in]: ['OWNER', 'ADMIN'] },
+                status: 'APPROVED'
+            },
+            include: [{ model: User, as: 'user' }],
+            transaction
+        });
+        // Get user info for the requester
+        const requester = await User.findByPk(userId, { transaction });
+        // Send email to each admin/owner
+        for (const admin of admins) {
+            const adminUser = admin.user;
+            if (adminUser && adminUser.email) {
+                try {
+                    await mailerService.sendEmail({
+                        to: adminUser.email,
+                        subject: `New join request for your community` ,
+                        text: `User ${requester ? requester.name : userId} has requested to join your community. Please review and approve the request in your dashboard.` ,
+                    });
+                } catch (mailErr) {
+                    // Log but do not fail the transaction if email fails
+                    logger.error('Failed to send join request email to admin:', { mailErr, adminEmail: adminUser.email });
+                }
+            }
+        }
+        // Also log for debugging
+        logger.info('New member request notification sent to admins', { communityId, userId });
+    },
+    
+    async notifyUserOfApproval(communityId, userId, transaction) {
+        try {
+            // Fetch user and community details
+            const user = await User.findByPk(userId, { transaction });
+            const community = await Community.findByPk(communityId, { transaction });
+            if (!user || !community) return;
+    
+            // Compose email
+            const subject = `Your request to join "${community.name}" has been approved!`;
+            // Send email
+            if(user.email){
+                await mailerService.sendEmail({
+                    to: user.email,
+                    subject,
+                    text: `Hi ${user.name || user.email},\n\nCongratulations! Your request to join the community "${community.name}" has been approved. You can now participate in discussions, events, and more.\n\nVisit the community: https://your-app-url.com/community/${community.slug}\n\nBest regards,\nThe Xplore Pulse Team`,
+                });
+            }
+            logger.info('Approval notification sent to user', { userId, communityId });
+        } catch (err) {
+            // Log but do not throw
+            logger.error('Failed to send approval notification email:', { err, userId, communityId });
+        }
+    },
+    
+    async checkAdminAccess(communityId, userId) {
+        if (!communityId || !userId) {
+            throw new GraphQLError('Missing communityId or userId', {
+                extensions: { code: 'BAD_REQUEST_INPUT' }
+            });
+        }
+        const membership = await CommunityMember.findOne({
+            where: {
+                communityId,
+                userId,
+                role: { [Op.in]: ['OWNER', 'ADMIN'] },
+                status: 'APPROVED'
+            }
+        });
+        if (!membership) {
+            throw new GraphQLError('Only community owners or admins can perform this action.', {
+                extensions: { code: 'INSUFFICIENT_PERMISSIONS' }
+            });
+        }
+        return true;
+    },
+
+    async checkOwnerAccess(communityId, userId) {
+        const community = await Community.findByPk(communityId);
+        if(!community){
+          throw new GraphQLError('Community Not Found',{
+              extensions: { code: "NOT_FOUND"}
+          })
+        }
+        if (!community || community.ownerId !== userId) {
+          throw new GraphQLError('Only community owner can perform this action',{
+              extensions: { code: "UNAUTHORIZED_ACCESS"}
+          })
+        }
+    },
+
+    async getMembershipStatus(communityId, userId, transaction) {
+        const membership = await CommunityMember.findOne({
+            where: { userId, communityId },
+            transaction
+        });
+        if (!membership) return 'NOT_MEMBER';
+        switch (membership.status) {
+            case 'APPROVED': return 'MEMBER';
+            case 'PENDING': return 'PENDING';
+            case 'REJECTED': return 'REJECTED';
+            default: return 'NOT_MEMBER';
+        }
+    },
+
+    async isAdmin(communityId, userId, transaction) {
+        if (!userId) return false;
+        const membership = await CommunityMember.findOne({
+            where: {
+                communityId,
+                userId,
+                status: 'APPROVED',
+                role: { [Op.in]: ['OWNER', 'ADMIN'] }
+            },
+            transaction
+        });
+        return !!membership;
+    },
+
+    async isModerator(communityId, userId, transaction) {
+        if (!userId) return false;
+        const membership = await CommunityMember.findOne({
+            where: {
+                communityId,
+                userId,
+                status: 'APPROVED',
+                role: { [Op.in]: ['OWNER', 'ADMIN', 'MODERATOR'] }
+            },
+            transaction
+        });
+        return !!membership;
+    },
+
+    async canPost(communityId, userId, transaction) {
+        if (!userId) return false;
+        try {
+            await this.checkPostAccess(communityId, userId, transaction);
+            return true;
+        } catch {
+            return false;
+        }
+    },
+
+    async canCreateEvents(communityId, userId, transaction) {
+        if (!userId) return false;
+        const community = await Community.findByPk(communityId, { transaction });
+        if (!community) return false;
+        const membership = await CommunityMember.findOne({
+            where: {
+                communityId,
+                userId,
+                status: 'APPROVED'
+            },
+            transaction
+        });
+        if (!membership) return false;
+        if (!community.settings.allowMemberEvents && !['OWNER', 'ADMIN'].includes(membership.role)) {
+            return false;
+        }
+        return true;
+    },
+
+    async checkPostAccess(communityId, userId, transaction) {
+        // 1. Check if user is a member and get their role/status
+        const membership = await CommunityMember.findOne({
+            where: {
+                communityId,
+                userId,
+                status: 'APPROVED'
+            },
+            transaction
+        });
+        if (!membership) {
+            throw new GraphQLError('You are not a member of this community', {
+                extensions: { code: 'NOT_A_MEMBER' }
+            });
+        }
+        // 2. Get the community and its settings
+        const community = await Community.findByPk(communityId, { transaction });
+        if (!community) {
+            throw new GraphQLError('Community not found', {
+                extensions: { code: 'COMMUNITY_NOT_FOUND' }
+            });
+        }
+        // 3. Owners and Admins can always post
+        if (['OWNER', 'ADMIN'].includes(membership.role)) {
+            return true;
+        }
+        // 4. Moderators can post if you want (optional, or treat as members)
+        if (membership.role === 'MODERATOR') {
+            // If you want to restrict moderators, add logic here
+            return true;
+        }
+        // 5. Members: check community settings
+        if (membership.role === 'MEMBER') {
+            if (community.settings && community.settings.allowMemberPosts) {
+                return true;
+            } else {
+                return false
+            }
+        }
+        // 6. Fallback: deny
+        return false
+    },
+
     async generateUniqueSlugHybrid(name, providedSlug, transaction) {
         let baseSlug;
-
         if (providedSlug) {
             if (!/^[a-z0-9-]+$/.test(providedSlug)) {
                 throw new GraphQLError('Slug can only contain lowercase letters, numbers, and hyphens', {
@@ -165,30 +515,19 @@ const communityService = {
         }
     },
 
-    /**
-     * Discover communities with robust validation, error handling, and edge case handling.
-     * @param {Object} params
-     * @param {string} params.userId - User UUID
-     * @param {number} params.limit - Page size
-     * @param {string} [params.cursor] - Pagination cursor (base64)
-     * @param {Object} [params.filters] - Filtering options
-     * @returns {Promise<{edges: Array, pageInfo: Object}>}
-     */
     async discoverCommunities({ userId, limit, cursor, filters }) {
-        const VALID_SORT_BY = ['CREATED_AT', 'MEMBER_COUNT', 'ACTIVITY', 'DISTANCE', 'RELEVANCE'];
+        const VALID_SORT_BY = ['CREATED_AT', 'MEMBER_COUNT', 'ACTIVITY', 'RELEVANCE'];
         const VALID_SORT_ORDER = ['ASC', 'DESC'];
         const DEFAULT_LIMIT = 20;
         const MAX_LIMIT = 100;
         let transaction;
-        
-        try {
-            // Validate userId
-            if (!userId) {
-                throw new GraphQLError('Missing userId', { extensions: { code: 'BAD_REQUEST_INPUT', field: 'userId' } });
-            }
-            this.validateUUID(userId, 'userId');
 
-            // Validate limit
+        try {
+            // 1. Validate userId
+            if (!userId || typeof userId !== 'string') {
+                throw new GraphQLError('Missing or invalid userId', { extensions: { code: 'BAD_REQUEST_INPUT', field: 'userId' } });
+            }
+            // 2. Validate limit
             let pageSize = DEFAULT_LIMIT;
             if (limit !== undefined) {
                 if (typeof limit !== 'number' || isNaN(limit) || limit <= 0) {
@@ -197,11 +536,8 @@ const communityService = {
                 pageSize = Math.min(limit, MAX_LIMIT);
             }
 
-            // Validate filters
+            // 3. Validate filters
             filters = filters || {};
-            if (filters.radius !== undefined && (typeof filters.radius !== 'number' || filters.radius < 0)) {
-                throw new GraphQLError('radius must be a non-negative number', { extensions: { code: 'BAD_REQUEST_INPUT', field: 'radius' } });
-            }
             if (filters.memberCountMin !== undefined && (typeof filters.memberCountMin !== 'number' || filters.memberCountMin < 0)) {
                 throw new GraphQLError('memberCountMin must be a non-negative number', { extensions: { code: 'BAD_REQUEST_INPUT', field: 'memberCountMin' } });
             }
@@ -215,26 +551,22 @@ const communityService = {
                 throw new GraphQLError(`Invalid sortOrder: ${filters.sortOrder}`, { extensions: { code: 'BAD_REQUEST_INPUT', field: 'sortOrder' } });
             }
 
-            // Start transaction
+            // 4. Start transaction
             transaction = await sequelize.transaction();
 
-            // Check user existence
+            // 5. Check user existence
             const user = await User.findByPk(userId, { transaction });
             if (!user) {
                 throw new GraphQLError('User not found', { extensions: { code: 'USER_NOT_FOUND' } });
             }
 
-            // Build query
+            // 6. Build query
             const where = {};
             if (filters.interests && Array.isArray(filters.interests) && filters.interests.length > 0) {
                 where['$interests.id$'] = { [Op.in]: filters.interests };
             }
-            if (filters.isPaid !== undefined) {
-                where.isPaid = filters.isPaid;
-            }
-            if (filters.isPrivate !== undefined) {
-                where.isPrivate = filters.isPrivate;
-            }
+            if (filters.isPaid !== undefined) where.isPaid = filters.isPaid;
+            if (filters.isPrivate !== undefined) where.isPrivate = filters.isPrivate;
             if (filters.memberCountMin !== undefined) {
                 where.memberCount = { ...(where.memberCount || {}), [Op.gte]: filters.memberCountMin };
             }
@@ -242,11 +574,11 @@ const communityService = {
                 where.memberCount = { ...(where.memberCount || {}), [Op.lte]: filters.memberCountMax };
             }
 
-            // Exclude communities user is already a member of
+            // 7. Exclude communities user is already a member of
             const userMemberships = await CommunityMember.findAll({
                 where: {
                     userId,
-                    status: { [Op.in]: ['MEMBER', 'PENDING'] }
+                    status: { [Op.in]: ['BANNED'] }
                 },
                 attributes: ['communityId'],
                 raw: true,
@@ -257,7 +589,7 @@ const communityService = {
                 where.id = { ...(where.id || {}), [Op.notIn]: excludedCommunityIds };
             }
 
-            // Cursor-based pagination
+            // 8. Cursor-based pagination
             let cursorCondition = {};
             let decodedCursor = null;
             if (cursor) {
@@ -279,7 +611,7 @@ const communityService = {
                 }
             }
 
-            // Sorting
+            // 9. Sorting
             let order = [['createdAt', 'DESC']];
             if (filters.sortBy) {
                 switch (filters.sortBy) {
@@ -289,15 +621,19 @@ const communityService = {
                     case 'ACTIVITY':
                         order = [['lastActivityAt', 'DESC']];
                         break;
+                    // No DISTANCE
+                    case 'RELEVANCE':
+                        // We'll sort in-memory after fetching
+                        break;
                     default:
                         order = [['createdAt', 'DESC']];
                 }
             }
 
-            // Query communities
+            // 10. Query communities
             const communities = await Community.findAll({
                 where: { ...where, ...cursorCondition },
-                order,
+                order: filters.sortBy === 'RELEVANCE' ? undefined : order,
                 limit: pageSize + 1,
                 include: [
                     { model: User, as: 'owner', attributes: ['id', 'name', 'profileImageUrl'] },
@@ -306,15 +642,34 @@ const communityService = {
                 transaction
             });
 
-            // Pagination logic
-            const hasNextPage = communities.length > pageSize;
-            const paginatedCommunities = hasNextPage ? communities.slice(0, pageSize) : communities;
+            // 11. Relevance sorting (in-memory)
+            let sortedCommunities = communities;
+            if (filters.sortBy === 'RELEVANCE') {
+                // Compute user interest IDs
+                const userInterests = await user.getInterests({ attributes: ['id'], transaction });
+                const userInterestIds = userInterests.map(i => i.id);
+
+                sortedCommunities = communities
+                    .map(community => {
+                        const sharedInterests = community.interests.filter(i => userInterestIds.includes(i.id)).length;
+                        const memberScore = community.memberCount || 0;
+                        const activityScore = community.lastActivityAt ? 5 : 0;
+                        const relevanceScore = (sharedInterests * 10) + (memberScore / 100) + activityScore;
+                        return { community, relevanceScore };
+                    })
+                    .sort((a, b) => b.relevanceScore - a.relevanceScore)
+                    .map(item => item.community);
+            }
+
+            // 12. Pagination logic
+            const hasNextPage = sortedCommunities.length > pageSize;
+            const paginatedCommunities = hasNextPage ? sortedCommunities.slice(0, pageSize) : sortedCommunities;
             const edges = paginatedCommunities.map(community => ({
                 node: community,
                 cursor: Buffer.from(JSON.stringify({ id: community.id, createdAt: community.createdAt })).toString('base64')
             }));
 
-            // Total count (for this filter)
+            // 13. Total count (for this filter)
             const totalCount = await Community.count({ where, transaction });
 
             await transaction.commit();
@@ -337,35 +692,10 @@ const communityService = {
         }
     },
 
-    async cleanupUploadedFiles(...fileUrls) {
-        const cleanupPromises = fileUrls
-          .filter(url => url) // Remove null/undefined URLs
-          .map(async (url) => {
-            try {
-              await fileUploadService.deleteFile(url);
-              logger.info('Successfully cleaned up file', { url });
-            } catch (error) {
-              logger.error('Failed to cleanup file', { url, error: error.message });
-            }
-          });
-        
-        await Promise.all(cleanupPromises);
-    },
-  
     async createCommunity(input) {
         const transaction = await sequelize.transaction();
-        let uploadedImageUrl = null;
-        let uploadedCoverImageUrl = null;
-        const uploadPromises = [];
-        
         try {
-            logger.info('Starting community creation', { ownerId: input.ownerId, name: input.name });
-            
-            // Validate required input
-            this.validateInput(input, ['name', 'description', 'ownerId']);
-            this.validateUUID(input.ownerId, 'ownerId');
-            this.validateLocation(input.location);
-            
+            logger.info('Starting community creation', { ownerId: input.ownerId, name: input.name });            
             // Check if owner exists and is active
             const owner = await User.findByPk(input.ownerId, { transaction });
             if (!owner) {
@@ -381,62 +711,8 @@ const communityService = {
                 });
             }
 
-            // Handle file uploads with improved error handling
-            if (input.imageFile) {
-                logger.info('Validating and uploading community profile image', { ownerId: input.ownerId });
-                try {
-                    fileUploadService.validateImageFile(input.imageFile, 5); // 5MB limit
-                    uploadPromises.push(
-                        fileUploadService.uploadFile(input.imageFile, 'communities/profiles')
-                            .then(url => {
-                                uploadedImageUrl = url;
-                                logger.info('Community profile image uploaded', { url });
-                            })
-                            .catch(error => {
-                                logger.error('Failed to upload profile image', { error, ownerId: input.ownerId });
-                                throw new GraphQLError('Failed to upload profile image', {
-                                    extensions: { code: 'FILE_UPLOAD_FAILED' }
-                                });
-                            })
-                    );
-                } catch (error) {
-                    logger.error('Profile image validation failed', { error, ownerId: input.ownerId });
-                    throw new GraphQLError('Invalid profile image', {
-                        extensions: { code: 'INVALID_FILE' }
-                    });
-                }
-            }
-
-            if (input.coverImageFile) {
-                logger.info('Validating and uploading community cover image', { ownerId: input.ownerId });
-                try {
-                    fileUploadService.validateImageFile(input.coverImageFile, 10); // 10MB limit for cover
-                    uploadPromises.push(
-                        fileUploadService.uploadFile(input.coverImageFile, 'communities/covers')
-                            .then(url => {
-                                uploadedCoverImageUrl = url;
-                                logger.info('Community cover image uploaded', { url });
-                            })
-                            .catch(error => {
-                                logger.error('Failed to upload cover image', { error, ownerId: input.ownerId });
-                                throw new GraphQLError('Failed to upload cover image', {
-                                    extensions: { code: 'FILE_UPLOAD_FAILED' }
-                                });
-                            })
-                    );
-                } catch (error) {
-                    logger.error('Cover image validation failed', { error, ownerId: input.ownerId });
-                    throw new GraphQLError('Invalid cover image', {
-                        extensions: { code: 'INVALID_FILE' }
-                    });
-                }
-            }
-
-            // Wait for all uploads to complete
-            if (uploadPromises.length > 0) {
-                await Promise.all(uploadPromises);
-                logger.info('All image uploads completed', { uploadedImageUrl, uploadedCoverImageUrl });
-            }
+            // New: Use imageUrl and coverImageUrl as URLs (strings) directly
+            // The client should upload files first using uploadFile mutation, then pass the URLs here
 
             // Generate and validate slug
             const slug = await this.generateUniqueSlugHybrid(
@@ -466,8 +742,8 @@ const communityService = {
                 name: input.name.trim(),
                 description: input.description.trim(),
                 slug,
-                imageUrl: uploadedImageUrl,
-                coverImageUrl: uploadedCoverImageUrl,
+                imageUrl: input.imageUrl || null, // Use URL directly
+                coverImageUrl: input.coverImageUrl || null, // Use URL directly
                 isPrivate: input.isPrivate || false,
                 isPaid: input.isPaid || false,
                 price: input.isPaid ? input.price : null,
@@ -476,8 +752,6 @@ const communityService = {
                 memberCount: 1, // Owner is the first member
                 postCount: 0,
                 eventCount: 0,
-                latitude: input.location.latitude,
-                longitude: input.location.longitude,
             };
             logger.info('Creating community in database', { communityData });
 
@@ -543,15 +817,6 @@ const communityService = {
                 await transaction.rollback();
                 logger.warn('Community creation transaction rolled back', { ownerId: input.ownerId, name: input.name });
             }
-
-            // Clean up uploaded files on error
-            try {
-                await this.cleanupUploadedFiles(uploadedImageUrl, uploadedCoverImageUrl);
-                logger.info('Cleaned up uploaded files after error', { uploadedImageUrl, uploadedCoverImageUrl });
-            } catch (cleanupError) {
-                logger.error('Failed to cleanup uploaded files after error', { cleanupError, uploadedImageUrl, uploadedCoverImageUrl });
-            }
-            
             if (error instanceof GraphQLError) throw error;
             throw new GraphQLError('Failed to create community', {
                 extensions: { code: 'COMMUNITY_CREATE_FAILED', originalError: error.message }
@@ -572,9 +837,6 @@ const communityService = {
                 });
             }
             
-            this.validateUUID(communityId, 'communityId');
-            this.validateUUID(userId, 'userId');
-
             // 2. Find the community
             const community = await Community.findByPk(communityId, { transaction });
             if (!community) {
@@ -816,374 +1078,15 @@ const communityService = {
             });
         }
     },
-  
-    /**
-     * Get paginated list of community wall posts with robust validation, error handling, and edge case handling.
-     * @param {Object} params
-     * @param {string} params.communityId - Community UUID
-     * @param {string} params.userId - User UUID
-     * @param {number} params.limit - Page size
-     * @param {string} [params.cursor] - Pagination cursor (base64)
-     * @param {string} [params.postType] - Filter by post type (TEXT, IMAGE, VIDEO, LINK, EVENT, EDUCATIONAL, POLL)
-     * @returns {Promise<{edges: Array, pageInfo: Object}>}
-     */
-    async getCommunityWall({ communityId, userId, limit, cursor, postType }) {
-        const VALID_POST_TYPES = ['TEXT', 'IMAGE', 'VIDEO', 'LINK', 'EVENT', 'EDUCATIONAL', 'POLL'];
-        const DEFAULT_LIMIT = 20;
-        const MAX_LIMIT = 100;
-        let transaction;
-        
-        try {
-            // Validate communityId and userId
-            if (!communityId || typeof communityId !== 'string') {
-                throw new GraphQLError('Missing or invalid communityId', {
-                    extensions: { code: 'BAD_REQUEST_INPUT', field: 'communityId' }
-                });
-            }
-            
-            this.validateUUID(communityId, 'communityId');
-            this.validateUUID(userId, 'userId');
-            
-            // Validate limit
-            let pageSize = DEFAULT_LIMIT;
-            if (limit !== undefined) {
-                if (typeof limit !== 'number' || isNaN(limit) || limit <= 0 || limit > MAX_LIMIT) {
-                    throw new GraphQLError('limit must be a positive integer between 1 and 100', { extensions: { code: 'BAD_REQUEST_INPUT', field: 'limit' } });
-                }
-                pageSize = limit;
-            }
 
-            // Validate postType
-            if (postType && !VALID_POST_TYPES.includes(postType)) {
-                throw new GraphQLError(`Invalid postType: ${postType}`, { extensions: { code: 'BAD_REQUEST_INPUT', field: 'postType' } });
-            }
-
-            // Start transaction
-            transaction = await sequelize.transaction();
-
-            // Check community existence and user access
-            const community = await Community.findByPk(communityId, { transaction });
-            if (!community) {
-                throw new GraphQLError('The community you are trying to access does not exist.', {
-                    extensions: { code: 'COMMUNITY_NOT_FOUND', field: 'communityId' }
-                });
-            }
-
-            // Check user membership and access rights
-            const membership = await CommunityMember.findOne({
-                where: { communityId, userId },
-                transaction
-            });
-
-            if (!membership || membership.status !== 'APPROVED') {
-                if (!membership) {
-                    throw new GraphQLError('You need to join this community to access its content.', {
-                        extensions: { code: 'NOT_A_MEMBER' }
-                    });
-                }
-                if (membership.status === 'BANNED') {
-                    throw new GraphQLError('You have been banned from this community.', {
-                        extensions: { code: 'BANNED' }
-                    });
-                }
-                if (membership.status === 'PENDING') {
-                    throw new GraphQLError('Your request to join this community is still pending approval.', {
-                        extensions: { code: 'PENDING' }
-                    });
-                }
-                if (membership.status === 'REJECTED') {
-                    throw new GraphQLError('Your request to join this community was rejected.', {
-                        extensions: { code: 'REJECTED' }
-                    });
-                }
-            }
-
-            // Build query with proper access control
-            const where = { communityId };
-            if (postType) where.type = postType;
-            
-            // Cursor-based pagination
-            let cursorCondition = {};
-            if (cursor) {
-                try {
-                    const decoded = Buffer.from(cursor, 'base64').toString('utf8');
-                    const decodedCursor = JSON.parse(decoded);
-                    if (!decodedCursor.id || !decodedCursor.createdAt) throw new Error('Invalid cursor');
-                    // For stable pagination, use createdAt/id tuple
-                    cursorCondition = {
-                        [Op.or]: [
-                            { createdAt: { [Op.lt]: decodedCursor.createdAt } },
-                            {
-                                createdAt: decodedCursor.createdAt,
-                                id: { [Op.lt]: decodedCursor.id }
-                            }
-                        ]
-                    };
-                } catch (err) {
-                    throw new GraphQLError('Malformed cursor', { extensions: { code: 'BAD_REQUEST_INPUT', field: 'cursor' } });
-                }
-            }
-
-            // Query posts with optimized includes
-            const posts = await CommunityPost.findAll({
-                where: { ...where, ...cursorCondition },
-                order: [
-                    ['createdAt', 'DESC'],
-                    ['id', 'DESC']
-                ],
-                limit: pageSize + 1,
-                include: [
-                    { 
-                        model: User, 
-                        as: 'author', 
-                        attributes: ['id', 'name', 'profileImageUrl', 'bio'],
-                        required: false
-                    },
-                    { 
-                        model: Community, 
-                        as: 'community', 
-                        attributes: ['id', 'name', 'slug'],
-                        required: false
-                    }
-                ],
-                transaction
-            });
-
-            // Pagination logic
-            const hasNextPage = posts.length > pageSize;
-            const paginatedPosts = hasNextPage ? posts.slice(0, pageSize) : posts;
-            const edges = paginatedPosts.map(post => ({
-                node: post,
-                cursor: Buffer.from(JSON.stringify({ id: post.id, createdAt: post.createdAt })).toString('base64')
-            }));
-
-            // Total count (for this filter)
-            const totalCount = await CommunityPost.count({ where, transaction });
-
-            await transaction.commit();
-            logger.info('Successfully fetched community wall', { communityId, userId, postCount: edges.length });
-            
-            return {
-                edges,
-                pageInfo: {
-                    hasNextPage,
-                    hasPreviousPage: !!cursor,
-                    totalCount,
-                    cursor: hasNextPage && edges.length > 0 ? edges[edges.length - 1].cursor : null
-                }
-            };
-        } catch (error) {
-            if (transaction && !transaction.finished) {
-                await transaction.rollback();
-            }
-            // Log error with context
-            logger.error('getCommunityWall error', { error, communityId, userId, limit, cursor, postType });
-            if (error instanceof GraphQLError) throw error;
-            throw new GraphQLError('Failed to fetch community wall', { extensions: { code: 'INTERNAL_SERVER_ERROR', originalError: error.message } });
-        }
-    },
-  
-    async createCommunityPost(data) {
-      try {
-        const post = new CommunityPost({
-          ...data,
-          likesCount: 0,
-          commentsCount: 0,
-          sharesCount: 0,
-          createdAt: new Date()
-        });
-        
-        await post.save();
-        
-        // Update community post count
-        await Community.findByIdAndUpdate(data.communityId, {
-          $inc: { postCount: 1 },
-          lastActivityAt: new Date()
-        });
-        
-        // If it's an event, update event count
-        if (data.type === 'EVENT') {
-          await Community.findByIdAndUpdate(data.communityId, {
-            $inc: { eventCount: 1 }
-          });
-        }
-        
-        return await post.populate('author community');
-      } catch (error) {
-        console.error('Error creating community post:', error);
-        throw error;
-      }
-    },
-  
-    async checkAdminAccess(communityId, userId) {
-        if (!communityId || !userId) {
-            throw new GraphQLError('Missing communityId or userId', {
-                extensions: { code: 'BAD_REQUEST_INPUT' }
-            });
-        }
-        const membership = await CommunityMember.findOne({
-            where: {
-                communityId,
-                userId,
-                role: { [Op.in]: ['OWNER', 'ADMIN'] },
-                status: 'APPROVED'
-            }
-        });
-        if (!membership) {
-            throw new GraphQLError('Only community owners or admins can perform this action.', {
-                extensions: { code: 'INSUFFICIENT_PERMISSIONS' }
-            });
-        }
-        return true;
-    },
-  
-    async checkOwnerAccess(communityId, userId) {
-      const community = await Community.findByPk(communityId);
-      if(!community){
-        throw new GraphQLError('Community Not Found',{
-            extensions: { code: "NOT_FOUND"}
-        })
-      }
-      if (!community || community.ownerId !== userId) {
-        throw new GraphQLError('Only community owner can perform this action',{
-            extensions: { code: "UNAUTHORIZED_ACCESS"}
-        })
-      }
-    },
-  
-    async getMembershipStatus(communityId, userId, transaction) {
-        const membership = await CommunityMember.findOne({
-            where: { userId, communityId },
-            transaction
-        });
-        if (!membership) return 'NOT_MEMBER';
-        switch (membership.status) {
-            case 'APPROVED': return 'MEMBER';
-            case 'PENDING': return 'PENDING';
-            case 'REJECTED': return 'REJECTED';
-            default: return 'NOT_MEMBER';
-        }
-    },
-
-    async isAdmin(communityId, userId, transaction) {
-        if (!userId) return false;
-        const membership = await CommunityMember.findOne({
-            where: {
-                communityId,
-                userId,
-                status: 'APPROVED',
-                role: { [Op.in]: ['OWNER', 'ADMIN'] }
-            },
-            transaction
-        });
-        return !!membership;
-    },
-
-    async isModerator(communityId, userId, transaction) {
-        if (!userId) return false;
-        const membership = await CommunityMember.findOne({
-            where: {
-                communityId,
-                userId,
-                status: 'APPROVED',
-                role: { [Op.in]: ['OWNER', 'ADMIN', 'MODERATOR'] }
-            },
-            transaction
-        });
-        return !!membership;
-    },
-
-    async canPost(communityId, userId, transaction) {
-        if (!userId) return false;
-        try {
-            await this.checkPostAccess(communityId, userId, transaction);
-            return true;
-        } catch {
-            return false;
-        }
-    },
-
-    async canCreateEvents(communityId, userId, transaction) {
-        if (!userId) return false;
-        const community = await Community.findByPk(communityId, { transaction });
-        if (!community) return false;
-        const membership = await CommunityMember.findOne({
-            where: {
-                communityId,
-                userId,
-                status: 'APPROVED'
-            },
-            transaction
-        });
-        if (!membership) return false;
-        if (!community.settings.allowMemberEvents && !['OWNER', 'ADMIN'].includes(membership.role)) {
-            return false;
-        }
-        return true;
-    },
-
-    async checkPostAccess(communityId, userId, transaction) {
-        // 1. Check if user is a member and get their role/status
-        const membership = await CommunityMember.findOne({
-            where: {
-                communityId,
-                userId,
-                status: 'APPROVED'
-            },
-            transaction
-        });
-        if (!membership) {
-            throw new GraphQLError('You are not a member of this community', {
-                extensions: { code: 'NOT_A_MEMBER' }
-            });
-        }
-        // 2. Get the community and its settings
-        const community = await Community.findByPk(communityId, { transaction });
-        if (!community) {
-            throw new GraphQLError('Community not found', {
-                extensions: { code: 'COMMUNITY_NOT_FOUND' }
-            });
-        }
-        // 3. Owners and Admins can always post
-        if (['OWNER', 'ADMIN'].includes(membership.role)) {
-            return true;
-        }
-        // 4. Moderators can post if you want (optional, or treat as members)
-        if (membership.role === 'MODERATOR') {
-            // If you want to restrict moderators, add logic here
-            return true;
-        }
-        // 5. Members: check community settings
-        if (membership.role === 'MEMBER') {
-            if (community.settings && community.settings.allowMemberPosts) {
-                return true;
-            } else {
-                return false
-            }
-        }
-        // 6. Fallback: deny
-        return false
-    },
-
-    /**
-     * Search communities with robust validation, error handling, and edge case handling.
-     * @param {Object} params
-     * @param {string} params.userId - User UUID
-     * @param {string} params.query - Search string
-     * @param {number} params.limit - Page size
-     * @param {string} [params.cursor] - Pagination cursor (base64)
-     * @param {Object} [params.filters] - Filtering options
-     * @returns {Promise<{edges: Array, pageInfo: Object}>}
-     */
     async searchCommunities({ userId, query, limit, cursor, filters }) {
-        const VALID_SORT_BY = ['CREATED_AT', 'MEMBER_COUNT', 'ACTIVITY', 'DISTANCE', 'RELEVANCE'];
+        const VALID_SORT_BY = ['CREATED_AT', 'MEMBER_COUNT', 'ACTIVITY', 'RELEVANCE'];
         const VALID_SORT_ORDER = ['ASC', 'DESC'];
         const DEFAULT_LIMIT = 20;
         const MAX_LIMIT = 100;
         try {
             // Validate userId
             if (!userId) throw new GraphQLError('Missing userId', { extensions: { code: 'BAD_REQUEST_INPUT' } });
-            this.validateUUID(userId, 'userId');
 
             // Validate query
             if (!query || typeof query !== 'string' || !query.trim()) {
@@ -1201,9 +1104,6 @@ const communityService = {
 
             // Validate filters
             filters = filters || {};
-            if (filters.radius !== undefined && (typeof filters.radius !== 'number' || filters.radius < 0)) {
-                throw new GraphQLError('radius must be a non-negative number', { extensions: { code: 'BAD_REQUEST_INPUT' } });
-            }
             if (filters.memberCountMin !== undefined && (typeof filters.memberCountMin !== 'number' || filters.memberCountMin < 0)) {
                 throw new GraphQLError('memberCountMin must be a non-negative number', { extensions: { code: 'BAD_REQUEST_INPUT' } });
             }
@@ -1218,8 +1118,9 @@ const communityService = {
             }
 
             // Check user existence
-            const user = await User.findByPk(userId);
+            const user = await User.findByPk(userId, { include: [{ model: Interest, as: 'interests', attributes: ['id'] }] });
             if (!user) throw new GraphQLError('User not found', { extensions: { code: 'USER_NOT_FOUND' } });
+            const userInterestIds = user.interests ? user.interests.map(i => i.id) : [];
 
             // Build query
             const where = {
@@ -1239,13 +1140,12 @@ const communityService = {
             if (filters.memberCountMax !== undefined) {
                 where.memberCount = { ...(where.memberCount || {}), [Op.lte]: filters.memberCountMax };
             }
-            // Location filter (skip for now)
 
             // Exclude communities user is already a member of
             const userMemberships = await CommunityMember.findAll({
                 where: {
                     userId,
-                    status: { [Op.in]: ['MEMBER', 'PENDING'] }
+                    status: { [Op.in]: ['BANNED'] }
                 },
                 attributes: ['communityId'],
                 raw: true
@@ -1287,26 +1187,56 @@ const communityService = {
                     case 'ACTIVITY':
                         order = [['lastActivityAt', 'DESC']];
                         break;
-                    // DISTANCE and RELEVANCE would require more complex logic
+                    case 'RELEVANCE':
+                        // We'll sort in-memory after fetching
+                        break;
                     default:
                         order = [['createdAt', 'DESC']];
                 }
             }
 
-            // Query communities
+            // Query communities (fetch extra for in-memory relevance sort)
+            const fetchLimit = filters.sortBy === 'RELEVANCE' ? Math.min(pageSize * 3, 100) : pageSize + 1;
             const communities = await Community.findAll({
                 where: { ...where, ...cursorCondition },
-                order,
-                limit: pageSize + 1,
+                order: filters.sortBy === 'RELEVANCE' ? undefined : order,
+                limit: fetchLimit,
                 include: [
                     { model: User, as: 'owner', attributes: ['id', 'name', 'profileImageUrl'] },
                     { model: Interest, as: 'interests', attributes: ['id', 'name', 'category', 'icon'] }
                 ]
             });
 
+            // In-memory relevance sorting
+            let sortedCommunities = communities;
+            if (filters.sortBy === 'RELEVANCE') {
+                sortedCommunities = communities
+                    .map(community => {
+                        // Text match score
+                        let textScore = 0;
+                        const q = query.trim().toLowerCase();
+                        const name = (community.name || '').toLowerCase();
+                        const desc = (community.description || '').toLowerCase();
+                        if (name === q) textScore += 20;
+                        else if (name.includes(q)) textScore += 10;
+                        if (desc.includes(q)) textScore += 5;
+                        // Interest overlap
+                        const sharedInterests = community.interests.filter(i => userInterestIds.includes(i.id)).length;
+                        // Popularity
+                        const memberScore = (community.memberCount || 0) / 100;
+                        // Recency
+                        const recencyScore = (new Date() - new Date(community.createdAt)) < 1000 * 60 * 60 * 24 * 30 ? 5 : 0;
+                        // Final relevance score
+                        const relevanceScore = textScore + (sharedInterests * 10) + memberScore + recencyScore;
+                        return { community, relevanceScore };
+                    })
+                    .sort((a, b) => b.relevanceScore - a.relevanceScore)
+                    .map(item => item.community);
+            }
+
             // Pagination logic
-            const hasNextPage = communities.length > pageSize;
-            const paginatedCommunities = hasNextPage ? communities.slice(0, pageSize) : communities;
+            const hasNextPage = sortedCommunities.length > pageSize;
+            const paginatedCommunities = hasNextPage ? sortedCommunities.slice(0, pageSize) : sortedCommunities;
             const edges = paginatedCommunities.map(community => ({
                 node: community,
                 cursor: Buffer.from(JSON.stringify({ id: community.id, createdAt: community.createdAt })).toString('base64')
@@ -1326,23 +1256,13 @@ const communityService = {
             };
         } catch (error) {
             // Log error for debugging, but do not leak details
-            console.error('Error in searchCommunities:', error);
+            logger.error('Error in searchCommunities', { error, userId, query, limit, cursor, filters });
             if (error instanceof GraphQLError) throw error;
             throw new GraphQLError('Failed to search communities', { extensions: { code: 'INTERNAL_SERVER_ERROR' } });
         }
     },
     
-    /**
-     * Get paginated list of community members with robust validation, error handling, and edge case handling.
-     * @param {Object} params
-     * @param {string} params.communityId - Community UUID
-     * @param {number} params.limit - Page size
-     * @param {string} [params.cursor] - Pagination cursor (base64)
-     * @param {string} [params.role] - Filter by role (OWNER, ADMIN, MODERATOR, MEMBER)
-     * @param {string} [params.status] - Filter by status (PENDING, APPROVED, REJECTED, BANNED)
-     * @returns {Promise<{edges: Array, pageInfo: Object}>}
-     */
-    async getCommunityMembers({ communityId, limit, cursor, role, status }) {
+    async getCommunityMembers(communityId, limit, cursor, role, status) {
         const VALID_ROLES = ['OWNER', 'ADMIN', 'MODERATOR', 'MEMBER'];
         const VALID_STATUSES = ['PENDING', 'APPROVED', 'REJECTED', 'BANNED'];
         const DEFAULT_LIMIT = 20;
@@ -1415,13 +1335,10 @@ const communityService = {
                     ['id', 'DESC']
                 ],
                 limit: pageSize + 1,
-                include: [
-                    {
-                        model: User,
-                        as: 'user',
-                        attributes: ['id', 'name', 'profileImageUrl', 'bio']
-                    }
-                ],
+                include: [{
+                    model: User,
+                    as: "user"
+                }],
                 transaction
             });
 
@@ -1457,154 +1374,16 @@ const communityService = {
         }
     },
     
-    async getTrendingCommunities({ userId, limit, timeframe }) {
-        let transaction;
-        try {
-            logger.info('Fetching trending communities', { userId, limit, timeframe });
-            
-            // 1. Validate input
-            if (limit !== undefined && (typeof limit !== 'number' || isNaN(limit) || limit < 1 || limit > 100)) {
-                throw new GraphQLError('Limit must be a number between 1 and 100', {
-                    extensions: { code: 'BAD_REQUEST_INPUT', field: 'limit' }
-                });
-            }
-            const allowedTimeframes = ['day', 'week', 'month'];
-            if (timeframe && !allowedTimeframes.includes(timeframe)) {
-                throw new GraphQLError('Invalid timeframe. Allowed: day, week, month', {
-                    extensions: { code: 'BAD_REQUEST_INPUT', field: 'timeframe' }
-                });
-            }
-            if (userId && typeof userId !== 'string') {
-                throw new GraphQLError('Invalid userId', {
-                    extensions: { code: 'BAD_REQUEST_INPUT', field: 'userId' }
-                });
-            }
-            if (userId) {
-                this.validateUUID(userId, 'userId');
-            }
-    
-            // 2. Calculate timeframe start date
-            const timeframeDate = new Date();
-            switch (timeframe) {
-                case 'day': timeframeDate.setDate(timeframeDate.getDate() - 1); break;
-                case 'week': timeframeDate.setDate(timeframeDate.getDate() - 7); break;
-                case 'month': timeframeDate.setMonth(timeframeDate.getMonth() - 1); break;
-                default: timeframeDate.setDate(timeframeDate.getDate() - 7);
-            }
-    
-            // 3. Start transaction
-            transaction = await sequelize.transaction();
-    
-            // 4. Build base query conditions
-            const whereConditions = { isPrivate: false };
-            
-            // Exclude communities user is already a member of (if userId provided)
-            if (userId) {
-                const userMemberships = await CommunityMember.findAll({
-                    where: {
-                        userId,
-                        status: { [Op.in]: ['APPROVED', 'PENDING'] }
-                    },
-                    attributes: ['communityId'],
-                    raw: true,
-                    transaction
-                });
-                const excludedCommunityIds = userMemberships.map(m => m.communityId);
-                if (excludedCommunityIds.length > 0) {
-                    whereConditions.id = { [Op.notIn]: excludedCommunityIds };
-                }
-            }
-    
-            // 5. Query with aggregates and optimized includes
-            const communities = await Community.findAll({
-                where: whereConditions,
-                include: [
-                    {
-                        model: CommunityPost,
-                        attributes: [],
-                        required: false,
-                        where: { createdAt: { [Op.gte]: timeframeDate } }
-                    },
-                    {
-                        model: CommunityMember,
-                        attributes: [],
-                        required: false,
-                        where: {
-                            joinedAt: { [Op.gte]: timeframeDate },
-                            status: 'APPROVED'
-                        }
-                    },
-                    {
-                        model: User,
-                        as: 'owner',
-                        attributes: ['id', 'name', 'profileImageUrl'],
-                        required: false
-                    },
-                    {
-                        model: Interest,
-                        as: 'interests',
-                        attributes: ['id', 'name', 'category', 'icon'],
-                        through: { attributes: [] },
-                        required: false
-                    }
-                ],
-                attributes: {
-                    include: [
-                        [Sequelize.fn('COUNT', Sequelize.col('CommunityPosts.id')), 'recentPosts'],
-                        [Sequelize.fn('COUNT', Sequelize.col('CommunityMembers.id')), 'recentMembers'],
-                        [
-                            Sequelize.literal(
-                                '(COUNT("CommunityPosts"."id") * 2 + COUNT("CommunityMembers"."id") * 5 + "Community"."memberCount" / 10)'
-                            ),
-                            'trendingScore'
-                        ]
-                    ]
-                },
-                group: ['Community.id', 'owner.id', 'interests.id', 'interests->CommunityInterest.communityId', 'interests->CommunityInterest.interestId'],
-                order: [[Sequelize.literal('"trendingScore"'), 'DESC']],
-                limit: limit || 10,
-                transaction
-            });
-    
-            await transaction.commit();
-            
-            const result = communities.map(c => {
-                const plain = c.get({ plain: true });
-                return {
-                    ...plain,
-                    trendingScore: parseFloat(plain.trendingScore) || 0,
-                    recentPosts: parseInt(plain.recentPosts) || 0,
-                    recentMembers: parseInt(plain.recentMembers) || 0
-                };
-            });
-            
-            logger.info('Successfully fetched trending communities', { count: result.length, timeframe });
-            return result;
-            
-        } catch (error) {
-            if (transaction && !transaction.finished) {
-                await transaction.rollback();
-            }
-            logger.error('getTrendingCommunities error', { error, userId, limit, timeframe });
-            if (error instanceof GraphQLError) throw error;
-            throw new GraphQLError('Failed to fetch trending communities', {
-                extensions: { code: 'TRENDING_COMMUNITIES_FAILED', originalError: error.message }
-            });
-        }
-    },
-    
     async getRecommendedCommunities({ userId, limit, maxDistance = 50 }) {
         let transaction;
         try {
             logger.info('Fetching recommended communities', { userId, limit, maxDistance });
-            
             // 1. Validate input
             if (!userId) {
                 throw new GraphQLError('Missing or invalid userId', {
                     extensions: { code: 'BAD_REQUEST_INPUT', field: 'userId' }
                 });
             }
-            this.validateUUID(userId, 'userId');
             
             if (typeof limit !== 'number' || isNaN(limit) || limit < 1 || limit > 100) {
                 throw new GraphQLError('Limit must be a number between 1 and 100', {
@@ -1619,7 +1398,6 @@ const communityService = {
     
             // 2. Start transaction
             transaction = await sequelize.transaction();
-    
             // 3. Fetch user and their interests
             const user = await User.findByPk(userId, {
                 include: [{ model: Interest, as: 'interests', attributes: ['id'] }],
@@ -1644,7 +1422,7 @@ const communityService = {
             const userMemberships = await CommunityMember.findAll({
                 where: {
                     userId,
-                    status: { [Op.in]: ['APPROVED', 'PENDING'] }
+                    status: { [Op.in]: ['APPROVED', 'PENDING', 'BANNED'] }
                 },
                 attributes: ['communityId'],
                 transaction
@@ -1693,10 +1471,7 @@ const communityService = {
         }
     },
     
-      /**
-       * Get location-based recommendations using distance calculations
-       */
-      async getLocationBasedRecommendations({ user, userInterestIds, excludedIds, maxDistance, limit, transaction }) {
+    async getLocationBasedRecommendations({ user, userInterestIds, excludedIds, maxDistance, limit, transaction }) {
         try {
           const { latitude: userLat, longitude: userLng } = user;
     
@@ -1791,33 +1566,44 @@ const communityService = {
             extensions: { code: 'LOCATION_RECOMMENDATIONS_FAILED', originalError: error.message }
           });
         }
-      },
+    },
     
-      /**
-       * Get interest-based recommendations (fallback when no location data)
-       */
-      async getInterestBasedRecommendations({ userInterestIds, excludedIds, limit, transaction }) {
+    async getInterestBasedRecommendations({ userInterestIds, excludedIds, limit, transaction }) {
         try {
           // Find recommended communities based on interests only
-          const communities = await Community.findAll({
-            where: {
-              id: excludedIds.length ? { [Op.notIn]: excludedIds } : { [Op.ne]: null },
-              isPrivate: false
-            },
-            include: [
-              { 
-                model: Interest, 
-                as: 'interests', 
-                attributes: ['id', 'name', 'category'] 
-              },
-              { 
-                model: User, 
-                as: 'owner', 
-                attributes: ['id', 'name', 'profileImageUrl'] 
-              }
-            ],
-            transaction
-          });
+            const communities = await Community.findAll({
+                where: {
+                    id: excludedIds.length ? { [Op.notIn]: excludedIds } : { [Op.ne]: null },
+                    isPrivate: false
+                },
+                include: [
+                    {
+                        model: User,
+                        as: 'owner',
+                        required: false
+                    },
+                    {
+                        model: Interest,
+                        as: 'interests',
+                        required: false
+                    },
+                    {
+                        model: User,
+                        as: 'admins',
+                        through: { where: { role: 'ADMIN', status: 'APPROVED' } },
+                        required: false
+                    },
+                    {
+                        model: User,
+                        as: 'moderators',
+                        through: { where: { role: 'MODERATOR', status: 'APPROVED' } },
+                        required: false
+                    }
+                ],
+                transaction
+            });
+
+          
     
           // Compute relevance score and filter for at least one matching interest
           const recommendations = communities
@@ -1845,12 +1631,9 @@ const communityService = {
             extensions: { code: 'INTEREST_RECOMMENDATIONS_FAILED', originalError: error.message }
           });
         }
-      },
+    },
     
-      /**
-       * Get popular communities when user has no interests (optional fallback)
-       */
-      async getPopularCommunities({ excludedIds, limit, transaction }) {
+    async getPopularCommunities({ excludedIds, limit, transaction }) {
         try {
           const communities = await Community.findAll({
             where: {
@@ -1886,216 +1669,10 @@ const communityService = {
             extensions: { code: 'POPULAR_COMMUNITIES_FAILED', originalError: error.message }
           });
         }
-      },
-    
-    async registerForEvent(postId, userId) {
-        try {
-          const post = await CommunityPost.findById(postId);
-          if (!post || post.type !== 'EVENT') {
-            throw new Error('Event not found');
-          }
-    
-          // Check if user is already registered
-          const existingRegistration = await EventRegistration.findOne({
-            userId,
-            postId
-          });
-    
-          if (existingRegistration) {
-            throw new Error('User already registered for this event');
-          }
-    
-          // Check if event has reached max capacity
-          if (post.eventDetails.maxAttendees && 
-              post.eventDetails.registrationCount >= post.eventDetails.maxAttendees) {
-            throw new Error('Event has reached maximum capacity');
-          }
-    
-          // Check registration deadline
-          if (post.eventDetails.registrationDeadline && 
-              new Date() > post.eventDetails.registrationDeadline) {
-            throw new Error('Registration deadline has passed');
-          }
-    
-          let paymentStatus = 'COMPLETED';
-          let ticketCode = this.generateTicketCode();
-    
-          // Handle paid events
-          if (post.eventDetails.ticketPrice && post.eventDetails.ticketPrice > 0) {
-            // Process payment
-            const paymentResult = await this.processEventPayment(
-              userId, 
-              post.eventDetails.ticketPrice, 
-              post.eventDetails.currency
-            );
-            
-            if (!paymentResult.success) {
-              throw new Error('Payment failed');
-            }
-            
-            paymentStatus = 'COMPLETED';
-          }
-    
-          const registration = new EventRegistration({
-            userId,
-            postId,
-            paymentStatus,
-            ticketCode
-          });
-    
-          await registration.save();
-    
-          // Update registration count
-          await CommunityPost.findByIdAndUpdate(postId, {
-            $inc: { 'eventDetails.registrationCount': 1 }
-          });
-    
-          // Send confirmation notification
-          await this.sendEventRegistrationConfirmation(userId, postId, ticketCode);
-    
-          return true;
-        } catch (error) {
-          console.error('Error registering for event:', error);
-          throw error;
-        }
     },
-
-    // Helper methods
-    generateSlug(name) {
-        return name.toLowerCase()
-          .replace(/[^a-z0-9 -]/g, '')
-          .replace(/\s+/g, '-')
-          .replace(/-+/g, '-')
-          .trim('-');
-    },
-
-    // Utility methods
-  generateTicketCode() {
-    return Math.random().toString(36).substring(2, 15) + 
-           Math.random().toString(36).substring(2, 15);
-  },
-
-  async processPayment(userId, amount, currency) {
-    // Integration with payment gateway (Stripe, PayPal, etc.)
-    // This is a placeholder implementation
-    try {
-      // Payment processing logic here
-      return { success: true, transactionId: 'txn_' + Date.now() };
-    } catch (error) {
-      return { success: false, error: error.message };
-    }
-  },
-
-  async processEventPayment(userId, amount, currency) {
-    // Similar to processPayment but for events
-    return this.processPayment(userId, amount, currency);
-  },
-
-  async notifyAdminsOfNewRequest(communityId, userId, transaction) {
-    // Send notifications to community admins (including owner)
-    const admins = await CommunityMember.findAll({
-        where: {
-            communityId,
-            role: { [Op.in]: ['OWNER', 'ADMIN'] },
-            status: 'APPROVED'
-        },
-        include: [{ model: User, as: 'user' }],
-        transaction
-    });
-    // Get user info for the requester
-    const requester = await User.findByPk(userId, { transaction });
-    // Send email to each admin/owner
-    for (const admin of admins) {
-        const adminUser = admin.user;
-        if (adminUser && adminUser.email) {
-            try {
-                await mailerService.sendEmail({
-                    to: adminUser.email,
-                    subject: `New join request for your community` ,
-                    text: `User ${requester ? requester.name : userId} has requested to join your community. Please review and approve the request in your dashboard.` ,
-                    html: `
-                      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #eee; border-radius: 8px; overflow: hidden;">
-                        <div style="background: #4f8cff; color: #fff; padding: 20px 24px;">
-                          <h2 style="margin: 0; font-size: 1.5em;">New Join Request</h2>
-                        </div>
-                        <div style="padding: 24px; background: #fafbfc;">
-                          <p style="font-size: 1.1em; margin-bottom: 16px;">
-                            <b>${requester ? requester.name : userId}</b> has requested to join your community.
-                          </p>
-                          <p style="margin-bottom: 16px;">Please review and approve the request in your dashboard.</p>
-                          <a href="https://your-app-url.com/community/${communityId}/admin" style="display: inline-block; background: #4f8cff; color: #fff; padding: 10px 18px; border-radius: 4px; text-decoration: none; font-weight: bold;">Review Requests</a>
-                        </div>
-                        <div style="background: #f1f3f6; color: #888; padding: 12px 24px; font-size: 0.95em;">
-                          Xplore Pulse Team
-                        </div>
-                      </div>
-                    `
-                });
-            } catch (mailErr) {
-                // Log but do not fail the transaction if email fails
-                logger.error('Failed to send join request email to admin:', { mailErr, adminEmail: adminUser.email });
-            }
-        }
-    }
-    // Also log for debugging
-    logger.info('New member request notification sent to admins', { communityId, userId });
-  },
-
-  async notifyUserOfApproval(communityId, userId, transaction) {
-    try {
-        // Fetch user and community details
-        const user = await User.findByPk(userId, { transaction });
-        const community = await Community.findByPk(communityId, { transaction });
-        if (!user || !community) return;
-
-        // Compose email
-        const subject = `Your request to join "${community.name}" has been approved!`;
-        const html = `
-          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #eee; border-radius: 8px; overflow: hidden;">
-            <div style="background: #4f8cff; color: #fff; padding: 20px 24px;">
-              <h2 style="margin: 0; font-size: 1.5em;">Welcome to ${community.name}!</h2>
-            </div>
-            <div style="padding: 24px; background: #fafbfc;">
-              <p style="font-size: 1.1em; margin-bottom: 16px;">
-                Hi <b>${user.name || user.email}</b>,
-              </p>
-              <p style="margin-bottom: 16px;">Congratulations! Your request to join the community <b>${community.name}</b> has been <span style="color: #28a745; font-weight: bold;">approved</span>.</p>
-              <a href="https://your-app-url.com/community/${community.slug}" style="display: inline-block; background: #4f8cff; color: #fff; padding: 10px 18px; border-radius: 4px; text-decoration: none; font-weight: bold;">Visit Community</a>
-            </div>
-            <div style="background: #f1f3f6; color: #888; padding: 12px 24px; font-size: 0.95em;">
-              Xplore Pulse Team
-            </div>
-          </div>
-        `;
-
-        // Send email
-        if(user.email){
-            await mailerService.sendEmail({
-                to: user.email,
-                subject,
-                text: `Hi ${user.name || user.email},\n\nCongratulations! Your request to join the community "${community.name}" has been approved. You can now participate in discussions, events, and more.\n\nVisit the community: https://your-app-url.com/community/${community.slug}\n\nBest regards,\nThe Xplore Pulse Team`,
-                html
-            });
-        }
-        logger.info('Approval notification sent to user', { userId, communityId });
-    } catch (err) {
-        // Log but do not throw
-        logger.error('Failed to send approval notification email:', { err, userId, communityId });
-    }
-  },
-
-  async sendEventRegistrationConfirmation(userId, postId, ticketCode) {
-    // Send event registration confirmation
-    console.log(`Event registration confirmed for user ${userId}, ticket: ${ticketCode}`);
-  },
 
     async updateCommunity(communityId, input, userId) {
         const transaction = await sequelize.transaction();
-        let uploadedImageUrl = null;
-        let uploadedCoverImageUrl = null;
-        let oldImageUrl = null;
-        let oldCoverImageUrl = null;
-        const uploadPromises = [];
         try {
             // 2. Find the community
             const community = await Community.findByPk(communityId, { transaction });
@@ -2112,26 +1689,8 @@ const communityService = {
                 });
             }
 
-            // 4. Handle file uploads if present
-            if (input.imageFile) {
-                fileUploadService.validateImageFile(input.imageFile, 5);
-                oldImageUrl = community.imageUrl;
-                uploadPromises.push(
-                    fileUploadService.uploadFile(input.imageFile, 'communities/profiles')
-                        .then(url => { uploadedImageUrl = url; })
-                );
-            }
-            if (input.coverImageFile) {
-                fileUploadService.validateImageFile(input.coverImageFile, 10);
-                oldCoverImageUrl = community.coverImageUrl;
-                uploadPromises.push(
-                    fileUploadService.uploadFile(input.coverImageFile, 'communities/covers')
-                        .then(url => { uploadedCoverImageUrl = url; })
-                );
-            }
-            if (uploadPromises.length > 0) {
-                await Promise.all(uploadPromises);
-            }
+            // New: Use imageUrl and coverImageUrl as URLs (strings) directly
+            // The client should upload files first using uploadFile mutation, then pass the URLs here
 
             // 5. Validate interests if provided
             if (input.interests && input.interests.length > 0) {
@@ -2148,9 +1707,11 @@ const communityService = {
 
             // 6. Only allow updating allowed fields
             const updatableFields = [
-                'name', 'description', 'isPrivate', 'isPaid', 'price', 'currency', 'location', 'settings'
+                'name', 'description', 'isPrivate', 'isPaid', 'price', 'currency', 'settings', 'imageUrl', 'coverImageUrl'
             ];
             const updateData = {};
+            const oldImageUrl = community.imageUrl
+            const oldCoverImageUrl = community.coverImageUrl
             for (const field of updatableFields) {
                 if (input[field] !== undefined) {
                     if (field === 'name') {
@@ -2165,9 +1726,6 @@ const communityService = {
                     }
                 }
             }
-            // Add new image URLs if uploaded
-            if (uploadedImageUrl) updateData.imageUrl = uploadedImageUrl;
-            if (uploadedCoverImageUrl) updateData.coverImageUrl = uploadedCoverImageUrl;
 
             // 7. Update the community
             await community.update(updateData, { transaction });
@@ -2181,12 +1739,36 @@ const communityService = {
                 await community.setInterests(interests, { transaction });
             }
 
-            // 9. Delete old images if replaced
-            if (uploadedImageUrl && oldImageUrl) {
-                try { await fileUploadService.deleteFile(oldImageUrl); } catch (e) { }
+            if (input.imageUrl && oldImageUrl) {
+                try {
+                    await fileUploadService.deleteFile(oldImageUrl);
+                    logger.info('Deleted ImageUrl', {
+                        userId,
+                        oldImageUrl: oldImageUrl,
+                    });
+                } catch (err) {
+                    logger.warn('Failed to delete existing ImageUrl', {
+                        userId,
+                        imageUrl: oldImageUrl,
+                        error: err.message,
+                    });
+                }
             }
-            if (uploadedCoverImageUrl && oldCoverImageUrl) {
-                try { await fileUploadService.deleteFile(oldCoverImageUrl); } catch (e) { }
+
+            if (input.coverImageUrl && oldCoverImageUrl) {
+                try {
+                    await fileUploadService.deleteFile(oldCoverImageUrl);
+                    logger.info('Deleted coverImageUrl', {
+                        userId,
+                        oldImageUrl: oldCoverImageUrl,
+                    });
+                } catch (err) {
+                    logger.warn('Failed to delete existing coverImageUrl image', {
+                        userId,
+                        imageUrl: oldCoverImageUrl,
+                        error: err.message,
+                    });
+                }
             }
 
             // 10. Fetch the updated community with all relations
@@ -2213,11 +1795,6 @@ const communityService = {
             if (transaction && !transaction.finished) {
                 await transaction.rollback();
             }
-            // Clean up new uploads if transaction fails
-            try {
-                if (uploadedImageUrl) await fileUploadService.deleteFile(uploadedImageUrl);
-                if (uploadedCoverImageUrl) await fileUploadService.deleteFile(uploadedCoverImageUrl);
-            } catch (cleanupError) { }
             if (error instanceof GraphQLError) throw error;
             throw new GraphQLError('Failed to update community', {
                 extensions: { code: 'COMMUNITY_UPDATE_FAILED', originalError: error.message }
@@ -2419,57 +1996,7 @@ const communityService = {
         }
     },
 
-    async notifyAdminsOfLeave(communityId, userId, transaction) {
-        // Send notifications to community admins (including owner) when a member leaves
-        try {
-            const admins = await CommunityMember.findAll({
-                where: {
-                    communityId,
-                    role: { [Op.in]: ['OWNER', 'ADMIN'] },
-                    status: 'APPROVED'
-                },
-                include: [{ model: User, as: 'user' }],
-                transaction
-            });
-            // Get user info for the leaver
-            const leaver = await User.findByPk(userId, { transaction });
-            // Send email to each admin/owner
-            for (const admin of admins) {
-                const adminUser = admin.user;
-                if (adminUser && adminUser.email) {
-                    try {
-                        await mailerService.sendEmail({
-                            to: adminUser.email,
-                            subject: `A member has left your community`,
-                            text: `User ${leaver ? leaver.name : userId} has left your community.`,
-                            html: `
-                              <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #eee; border-radius: 8px; overflow: hidden;">
-                                <div style="background: #ff4f4f; color: #fff; padding: 20px 24px;">
-                                  <h2 style="margin: 0; font-size: 1.5em;">Member Left</h2>
-                                </div>
-                                <div style="padding: 24px; background: #fafbfc;">
-                                  <p style="font-size: 1.1em; margin-bottom: 16px;">
-                                    <b>${leaver ? leaver.name : userId}</b> has left your community.
-                                  </p>
-                                </div>
-                                <div style="background: #f1f3f6; color: #888; padding: 12px 24px; font-size: 0.95em;">
-                                  Xplore Pulse Team
-                                </div>
-                              </div>
-                            `
-                        });
-                    } catch (mailErr) {
-                        logger.error('Failed to send leave notification email to admin:', { mailErr, adminEmail: adminUser.email });
-                    }
-                }
-            }
-            logger.info('Leave notification sent to admins', { communityId, userId });
-        } catch (err) {
-            logger.error('Failed to notify admins of leave', { err, communityId, userId });
-        }
-    },
-
-    async getPendingMemberRequests({ communityId, limit = 20, cursor }) {
+    async getPendingMemberRequests(communityId, limit = 20, cursor) {
         let transaction;
         try {
             // 1. Validate input
@@ -2663,64 +2190,6 @@ const communityService = {
         }
     },
 
-    async notifyUserOfRejection(communityId, userId, transaction) {
-        try {
-            // Fetch user and community details
-            const user = await User.findByPk(userId, { transaction });
-            const community = await Community.findByPk(communityId, { transaction });
-            if (!user || !community) return;
-
-            // Compose email
-            const subject = `Your request to join "${community.name}" has been rejected`;
-            const message = `Hi ${user.name || user.email},\n\nWe regret to inform you that your request to join the community "${community.name}" has been rejected. You may try joining other communities or contact the community owner for more information.\n\nBest regards,\nThe Xplore Pulse Team`;
-            const html = `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <title>Community Request Rejected</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <style>
-    /* ...styles as above... */
-  </style>
-</head>
-<body>
-  <div class="container">
-    <div class="header">
-      <img src="https://cdn-icons-png.flaticon.com/512/463/463612.png" alt="Rejected" />
-      <h1>Request Rejected</h1>
-    </div>
-    <p>Hi <strong>${user.name || user.email}</strong>,</p>
-    <p>
-      We regret to inform you that your request to join the community
-      <span class="community-name">${community.name}</span>
-      has been <span style="color:#e53e3e;font-weight:bold;">rejected</span>.
-    </p>
-    <p>
-      You may try joining other communities or contact the community owner for more information.
-    </p>
-    <a href="https://xplorepulse.com/communities" class="button">Explore Other Communities</a>
-    <div class="footer">
-      &copy; 2024 Xplore Pulse. All rights reserved.
-    </div>
-  </div>
-</body>
-</html>`;
-
-            // Send email
-            if(user.email){
-                await mailerService.sendEmail({
-                    to: user.email,
-                    subject,
-                    text: message,
-                    html
-                });
-            }
-        } catch (err) {
-            // Log but do not throw
-            console.error('Failed to send rejection notification email:', err);
-        }
-    },
-
     async assignMemberRole(communityId, userId, role) {
         const transaction = await sequelize.transaction();
         try {
@@ -2863,64 +2332,6 @@ const communityService = {
         }
     },
 
-    async notifyUserOfRoleChange(communityId, userId, role, transaction) {
-        try {
-            // Fetch user and community details
-            const user = await User.findByPk(userId, { transaction });
-            const community = await Community.findByPk(communityId, { transaction });
-            if (!user || !community) return;
-
-            // Compose email
-            const subject = `Your role in "${community.name}" has been updated to ${role}`;
-            const message = `Hi ${user.name || user.email},\n\nYour role in the community "${community.name}" has been updated to ${role}.\n\nBest regards,\nThe Xplore Pulse Team`;
-            const html = `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <title>Role Updated in Community</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <style>
-    /* ...styles as above... */
-  </style>
-</head>
-<body>
-  <div class="container">
-    <div class="header">
-      <img src="https://cdn-icons-png.flaticon.com/512/3135/3135715.png" alt="Role Update" />
-      <h1>Role Updated!</h1>
-    </div>
-    <p>Hi <strong>${user.name || user.email}</strong>,</p>
-    <p>
-      Your role in the community
-      <span class="community-name">${community.name}</span>
-      has been updated to
-      <span class="role-badge">${role}</span>.
-    </p>
-    <p>
-      You now have new permissions and responsibilities in this community. If you have any questions, feel free to contact the community admin.
-    </p>
-    <div class="footer">
-      &copy; 2024 Xplore Pulse. All rights reserved.
-    </div>
-  </div>
-</body>
-</html>`;
-
-            if(user.email){
-                // Send email
-            await mailerService.sendEmail({
-                to: user.email,
-                subject,
-                text: message,
-                html
-            });
-            }
-        } catch (err) {
-            // Log but do not throw
-            console.error('Failed to send role change notification email:', err);
-        }
-    },
-
     async removeMemberRole(communityId, userId) {
         const transaction = await sequelize.transaction();
         try {
@@ -3040,26 +2451,6 @@ const communityService = {
         }
     },
 
-    async notifyUserOfRoleRemoval(communityId, userId, transaction) {
-        try {
-            // Fetch user and community details
-            const user = await User.findByPk(userId, { transaction });
-            const community = await Community.findByPk(communityId, { transaction });
-            if (!user || !community) return;
-
-            // Compose email
-            const subject = `Your role in "${community.name}" has been removed`;
-            const message = `Hi ${user.name || user.email},\n\nYour special role in the community "${community.name}" has been removed. You are now a regular MEMBER.\n\nBest regards,\nThe Xplore Pulse Team`;
-            const html = `<p>Hi ${user.name || user.email},</p>\n<p>Your special role in the community <b>${community.name}</b> has been removed. You are now a regular <b>MEMBER</b>.</p>\n<p>Best regards,<br/>The Xplore Pulse Team</p>`;
-
-            // Send email
-            
-        } catch (err) {
-            // Log but do not throw
-            console.error('Failed to send role removal notification email:', err);
-        }
-    },
-
     async banMember(communityId, userId, reason) {
         const transaction = await sequelize.transaction();
         try {
@@ -3162,66 +2553,6 @@ const communityService = {
             throw new GraphQLError('Failed to ban member', {
                 extensions: { code: 'BAN_MEMBER_FAILED', originalError: error.message }
             });
-        }
-    },
-
-    async notifyUserOfBan(communityId, userId, reason, transaction) {
-        try {
-            // Fetch user and community details
-            const user = await User.findByPk(userId, { transaction });
-            const community = await Community.findByPk(communityId, { transaction });
-            if (!user || !community) return;
-
-            // Compose email
-            const subject = `You have been banned from "${community.name}"`;
-            const message = `Hi ${user.name || user.email},\n\nYou have been banned from the community "${community.name}".${reason ? `\n\nReason: ${reason}` : ''}\n\nIf you believe this was a mistake, please contact the community owner.\n\nBest regards,\nThe Xplore Pulse Team`;
-            const html = `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <title>Banned from Community</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <style>
-    /* ...styles as above... */
-  </style>
-</head>
-<body>
-  <div class="container">
-    <div class="header">
-      <img src="https://cdn-icons-png.flaticon.com/512/463/463612.png" alt="Banned" />
-      <h1>Access Revoked</h1>
-    </div>
-    <p>Hi <strong>${user.name || user.email}</strong>,</p>
-    <p>
-      We regret to inform you that you have been <span style="color:#e53e3e;font-weight:bold;">banned</span> from the community
-      <span class="community-name">${community.name}</span>.
-    </p>
-    <div class="ban-reason">
-      <strong>Reason:</strong> ${banReason}
-    </div>
-    <p>
-      If you believe this was a mistake or have questions, please contact the community admin.
-    </p>
-    <a href="https://xplorepulse.com/support" class="button">Contact Support</a>
-    <div class="footer">
-      &copy; 2024 Xplore Pulse. All rights reserved.
-    </div>
-  </div>
-</body>
-</html>`;
-
-            // Send email
-            if(user.email){
-                await mailerService.sendEmail({
-                    to: user.email,
-                    subject,
-                    text: message,
-                    html
-                });
-            }
-        } catch (err) {
-            // Log but do not throw
-            console.error('Failed to send ban notification email:', err);
         }
     },
 
@@ -3329,63 +2660,6 @@ const communityService = {
         }
     },
 
-    async notifyUserOfUnban(communityId, userId, transaction) {
-        try {
-            // Fetch user and community details
-            const user = await User.findByPk(userId, { transaction });
-            const community = await Community.findByPk(communityId, { transaction });
-            if (!user || !community) return;
-
-            // Compose email
-            const subject = `You have been unbanned from "${community.name}"`;
-            const message = `Hi ${user.name || user.email},\n\nYou have been unbanned from the community "${community.name}". You may now request to join again.\n\nBest regards,\nThe Xplore Pulse Team`;
-            const html = `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <title>Unbanned from Community</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <style>
-    /* ...styles as above... */
-  </style>
-</head>
-<body>
-  <div class="container">
-    <div class="header">
-      <img src="https://cdn-icons-png.flaticon.com/512/190/190411.png" alt="Unbanned" />
-      <h1>Welcome Back!</h1>
-    </div>
-    <p>Hi <strong>${user.name || user.email}</strong>,</p>
-    <p>
-      Good news! You have been <span style="color:#38a169;font-weight:bold;">unbanned</span> from the community
-      <span class="community-name">${community.name}</span>.
-    </p>
-    <p>
-      You can now participate and engage with the community again. Please make sure to follow the community guidelines to ensure a positive experience for everyone.
-    </p>
-    <a href="https://xplorepulse.com/community/${community.id}" class="button">Visit Community</a>
-    <div class="footer">
-      &copy; 2024 Xplore Pulse. All rights reserved.
-    </div>
-  </div>
-</body>
-</html>`;
-
-           if(user.email){
-             // Send email
-             await mailerService.sendEmail({
-                to: user.email,
-                subject,
-                text: message,
-                html
-            });
-           }
-        } catch (err) {
-            // Log but do not throw
-            console.error('Failed to send unban notification email:', err);
-        }
-    },
-
     async getUserJoinedCommunities({ userId, limit = 20, cursor, status }) {
         let transaction;
         try {
@@ -3397,7 +2671,6 @@ const communityService = {
                     extensions: { code: 'BAD_REQUEST_INPUT', field: 'userId' }
                 });
             }
-            this.validateUUID(userId, 'userId');
       
             if (typeof limit !== 'number' || isNaN(limit) || limit < 1 || limit > 100) {
                 throw new GraphQLError('Limit must be a number between 1 and 100', {
@@ -3447,18 +2720,27 @@ const communityService = {
                 include: [{
                     model: Community,
                     as: 'community',
-                    attributes: ['id', 'name', 'profileImageUrl', 'slug', 'memberCount', 'isPrivate'],
                     include: [
                         { 
                             model: User, 
                             as: 'owner', 
-                            attributes: ['id', 'name', 'profileImageUrl'],
                             required: false
                         },
                         { 
                             model: Interest, 
                             as: 'interests', 
-                            attributes: ['id', 'name', 'category'],
+                            required: false
+                        },
+                        { 
+                            model: User, 
+                            as: 'admins', 
+                            through: { where: { role: 'ADMIN', status: 'APPROVED' } },
+                            required: false
+                        },
+                        { 
+                            model: User, 
+                            as: 'moderators', 
+                            through: { where: { role: 'MODERATOR', status: 'APPROVED' } },
                             required: false
                         }
                     ]
@@ -3470,10 +2752,21 @@ const communityService = {
             const hasNextPage = memberships.length > limit;
             const sliced = memberships.slice(0, limit);
       
-            const edges = sliced.map(membership => ({
-                node: membership.community,
-                cursor: Buffer.from(membership.joinedAt.toISOString()).toString('base64')
-            }));
+            const edges = sliced.map(membership => {
+                // Remove computed fields if present
+                if (membership.community) {
+                    delete membership.community.canCreateEvents;
+                    delete membership.community.isOwner;
+                    delete membership.community.isAdmin;
+                    delete membership.community.isModerator;
+                    delete membership.community.canPost;
+                    delete membership.community.membershipStatus;
+                }
+                return {
+                    node: membership.community,
+                    cursor: Buffer.from(membership.joinedAt.toISOString()).toString('base64')
+                };
+            });
       
             // 6. Total joined count
             const totalCount = await CommunityMember.count({
@@ -3515,9 +2808,7 @@ const communityService = {
                 throw new GraphQLError('Missing or invalid userId', {
                     extensions: { code: 'BAD_REQUEST_INPUT', field: 'userId' }
                 });
-            }
-            this.validateUUID(userId, 'userId');
-            
+            }            
             if (typeof limit !== 'number' || isNaN(limit) || limit < 1 || limit > 100) {
                 throw new GraphQLError('Limit must be a number between 1 and 100', {
                     extensions: { code: 'BAD_REQUEST_INPUT', field: 'limit' }
@@ -3565,13 +2856,23 @@ const communityService = {
                     { 
                         model: User, 
                         as: 'owner', 
-                        attributes: ['id', 'name', 'profileImageUrl'],
                         required: false
                     },
                     { 
                         model: Interest, 
                         as: 'interests', 
-                        attributes: ['id', 'name', 'category'],
+                        required: false
+                    },
+                    { 
+                        model: User, 
+                        as: 'admins', 
+                        through: { where: { role: 'ADMIN', status: 'APPROVED' } },
+                        required: false
+                    },
+                    { 
+                        model: User, 
+                        as: 'moderators', 
+                        through: { where: { role: 'MODERATOR', status: 'APPROVED' } },
                         required: false
                     }
                 ],
@@ -3626,12 +2927,7 @@ const communityService = {
                     extensions: { code: 'BAD_REQUEST_INPUT', field: 'communityId' }
                 });
             }
-            this.validateUUID(communityId, 'communityId');
             
-            if (userId) {
-                this.validateUUID(userId, 'userId');
-            }
-
             // 2. Start transaction
             transaction = await sequelize.transaction();
             
@@ -3641,27 +2937,23 @@ const communityService = {
                     { 
                         model: User, 
                         as: 'owner',
-                        attributes: ['id', 'name', 'profileImageUrl', 'bio'],
                         required: false
                     },
                     { 
                         model: Interest, 
                         as: 'interests',
-                        attributes: ['id', 'name', 'category', 'icon'],
                         required: false
                     },
                     { 
                         model: User, 
                         as: 'admins', 
                         through: { where: { role: 'ADMIN', status: 'APPROVED' } },
-                        attributes: ['id', 'name', 'profileImageUrl'],
                         required: false
                     },
                     { 
                         model: User, 
                         as: 'moderators', 
                         through: { where: { role: 'MODERATOR', status: 'APPROVED' } },
-                        attributes: ['id', 'name', 'profileImageUrl'],
                         required: false
                     }
                 ],
@@ -3675,15 +2967,7 @@ const communityService = {
             }
 
             // 4. If userId is provided, compute permissions and membership status
-            if (userId) {
-                // Check if user exists
-                const user = await User.findByPk(userId, { attributes: ['id'], transaction });
-                if (!user) {
-                    throw new GraphQLError('User not found', {
-                        extensions: { code: 'USER_NOT_FOUND', field: 'userId' }
-                    });
-                }
-                
+            if (userId) {            
                 community.isOwner = community.ownerId === userId;
                 community.isAdmin = await this.isAdmin(community.id, userId, transaction);
                 community.isModerator = await this.isModerator(community.id, userId, transaction);
@@ -3715,117 +2999,6 @@ const communityService = {
         }
     },
 
-    /**
-     * Checks if a user has access to view members of a community.
-     * Only APPROVED members can access. Throws for PENDING, REJECTED, BANNED, or non-members.
-     * @param {string} communityId - Community UUID
-     * @param {string} userId - User UUID
-     * @returns {Promise<void>} Throws GraphQLError if not allowed
-     */
-    async checkMembershipAccess(communityId, userId) {
-        // Validate input
-        if (!communityId || !userId) {
-            throw new GraphQLError('Something went wrong. Please try again later.', {
-                extensions: { code: 'BAD_REQUEST_INPUT' }
-            });
-        }
-    
-        this.validateUUID(communityId, 'communityId');
-        this.validateUUID(userId, 'userId');
-    
-        // Check community existence
-        const community = await Community.findByPk(communityId);
-        if (!community) {
-            throw new GraphQLError('The community you are trying to access does not exist.', {
-                extensions: { code: 'COMMUNITY_NOT_FOUND' }
-            });
-        }
-    
-        // Check membership
-        const membership = await CommunityMember.findOne({
-            where: { communityId, userId }
-        });
-    
-        if (!membership) {
-            throw new GraphQLError('You need to join this community to access its content.', {
-                extensions: { code: 'NOT_A_MEMBER' }
-            });
-        }
-    
-        if (membership.status === 'BANNED') {
-            throw new GraphQLError('You have been banned from this community.', {
-                extensions: { code: 'BANNED' }
-            });
-        }
-    
-        if (membership.status === 'REJECTED') {
-            throw new GraphQLError('Your request to join this community was rejected.', {
-                extensions: { code: 'REJECTED' }
-            });
-        }
-    
-        if (membership.status === 'PENDING') {
-            throw new GraphQLError('Your request to join this community is still pending approval.', {
-                extensions: { code: 'PENDING' }
-            });
-        }
-    
-        // Only APPROVED members allowed
-        return;
-    },
-
-    /**
-     * Checks if a user has access to view the community wall (posts).
-     * Only APPROVED members can access. Throws for PENDING, REJECTED, BANNED, or non-members.
-     * @param {string} communityId - Community UUID
-     * @param {string} userId - User UUID
-     * @returns {Promise<void>} Throws GraphQLError if not allowed
-     */
-    async checkWallAccess(communityId, userId) {
-        // Validate input
-        if (!communityId || !userId) {
-            throw new GraphQLError('Something went wrong. Please try again later.', {
-                extensions: { code: 'BAD_REQUEST_INPUT' }
-            });
-        }
-        this.validateUUID(communityId, 'communityId');
-        this.validateUUID(userId, 'userId');
-
-        // Check community existence
-        const community = await Community.findByPk(communityId);
-        if (!community) {
-            throw new GraphQLError('The community you are trying to access does not exist.', {
-                extensions: { code: 'COMMUNITY_NOT_FOUND' }
-            });
-        }
-
-        // Check membership
-        const membership = await CommunityMember.findOne({
-            where: { communityId, userId }
-        });
-        if (!membership) {
-            throw new GraphQLError('You need to join this community to access its content.', {
-                extensions: { code: 'NOT_A_MEMBER' }
-            });
-        }
-        if (membership.status === 'BANNED') {
-            throw new GraphQLError('You have been banned from this community.', {
-                extensions: { code: 'BANNED' }
-            });
-        }
-        if (membership.status === 'REJECTED') {
-            throw new GraphQLError('Your request to join this community was rejected.', {
-                extensions: { code: 'REJECTED' }
-            });
-        }
-        if (membership.status === 'PENDING') {
-            throw new GraphQLError('Your request to join this community is still pending approval.', {
-                extensions: { code: 'PENDING' }
-            });
-        }
-        // Only APPROVED members allowed
-        return;
-    },
 };
 
 module.exports = communityService;

@@ -3,7 +3,7 @@
 # Represents a community group
 # Includes metadata, permissions, and relationship with users
  type Community {
-    id: ID!
+    id: UUID!
     name: String!
     slug: String!                   # Unique, SEO-friendly identifier
     description: String!
@@ -16,7 +16,7 @@
     memberCount: Int!              # Total number of members
     postCount: Int!                # Number of posts in the community
     eventCount: Int!               # Number of events hosted
-    location: Location             # Optional physical location of the community
+    # location: Location             # Optional physical location of the community
     interests: [Interest!]!        # Tags or interest categories
     owner: User!                   # Creator of the community
     admins: [User!]!               # Additional admins
@@ -60,11 +60,16 @@ enum MemberRequestStatus {
   REJECTED
 }
 
+# Geolocation structure
+type Location {
+  latitude: Float!
+  longitude: Float!
+}
+
 # Membership record linking user to a community
 type CommunityMember {
-  id: ID!
+  id: UUID!
   user: User!
-  community: Community!
   role: MemberRole!
   status: MemberRequestStatus!
   joinedAt: Date                  # When the member was approved
@@ -73,7 +78,7 @@ type CommunityMember {
 
 # Post in a community
 type CommunityPost {
-  id: ID!
+  id: UUID!
   type: PostType!               # Content type (text, image, video, etc.)
   title: String!
   content: String
@@ -178,9 +183,7 @@ type CommunityPostEdge {
 
 # Filters for discovering communities
 input CommunityFilters {
-  interests: [ID!]
-  location: LocationInput
-  radius: Float  # In kilometers
+  interests: [UUID!]
   isPaid: Boolean
   isPrivate: Boolean
   memberCountMin: Int
@@ -198,7 +201,6 @@ enum CommunitySortBy {
   CREATED_AT
   MEMBER_COUNT
   ACTIVITY
-  DISTANCE
   RELEVANCE
 }
 
@@ -211,33 +213,33 @@ enum SortOrder {
 input CreateCommunityInput {
   name: String!
   description: String!
-  imageUrl: Upload
-  coverImageUrl: Upload
+  imageUrl: String   # URL of uploaded image (use uploadFile mutation first)
+  coverImageUrl: String # URL of uploaded cover image (use uploadFile mutation first)
   isPrivate: Boolean! = false
   isPaid: Boolean! = false
   price: Float
   currency: Currency = "USD"
-  location: LocationInput!
-  interests: [ID!]!
+  # location: LocationInput!
+  interests: [UUID!]!
 }
 
 # Input for updating a community
 input UpdateCommunityInput {
   name: String
   description: String
-  imageUrl: Upload
-  coverImageUrl: Upload
+  imageUrl: String   # URL of uploaded image (use uploadFile mutation first)
+  coverImageUrl: String # URL of uploaded cover image (use uploadFile mutation first)
   isPrivate: Boolean
   isPaid: Boolean
   price: Float
   currency: Currency
-  location: LocationInput
-  interests: [ID!]
+  # location: LocationInput
+  interests: [UUID!]
 }
 
 # Input for creating posts
 input CreateCommunityPostInput {
-  communityId: ID!
+  communityId: UUID!
   type: PostType!
   title: String!
   content: String
@@ -272,41 +274,27 @@ type Query {
   searchCommunities(query: String!, first: Int = 20, after: String, filters: CommunityFilters): CommunitiesConnection!
   myJoinedCommunities(first: Int = 20, after: String, status: MemberRequestStatus): CommunitiesConnection! 
   myOwnedCommunities(first: Int = 20, after: String): CommunitiesConnection!
-  community(id: ID!): Community
-  communityMembers(communityId: ID!, first: Int = 20, after: String, role: MemberRole, status: MemberRequestStatus): CommunityMembersConnection!
-  pendingMemberRequests(communityId: ID!, first: Int = 20, after: String): CommunityMembersConnection!
-  communityWall(communityId: ID!, first: Int = 20, after: String, postType: PostType): CommunityWallConnection!
-  trendingCommunities(first: Int = 10, timeframe: String = "week"): [Community!]!
+  community(id: UUID!): Community
+  communityMembers(communityId: UUID!, first: Int = 20, after: String, role: MemberRole, status: MemberRequestStatus): CommunityMembersConnection!
+  pendingMemberRequests(communityId: UUID!, first: Int = 20, after: String): CommunityMembersConnection!
   recommendedCommunities(first: Int = 10): [Community!]!
 }
 
 # Mutation operations
 type Mutation {
   createCommunity(input: CreateCommunityInput!): Community!
-  updateCommunity(id: ID!, input: UpdateCommunityInput!): Community!
-  deleteCommunity(id: ID!): GenericResponse!
+  updateCommunity(id: UUID!, input: UpdateCommunityInput!): Community!
+  deleteCommunity(id: UUID!): GenericResponse!
 
-  joinCommunity(communityId: ID!): GenericResponse!
-  leaveCommunity(communityId: ID!): GenericResponse!
+  joinCommunity(communityId: UUID!): GenericResponse!
+  leaveCommunity(communityId: UUID!): GenericResponse!
 
-  approveMemberRequest(communityId: ID!, userId: ID!): GenericResponse!
-  rejectMemberRequest(communityId: ID!, userId: ID!): GenericResponse!
+  approveMemberRequest(communityId: UUID!, userId: UUID!): GenericResponse!
+  rejectMemberRequest(communityId: UUID!, userId: UUID!): GenericResponse!
 
-  assignMemberRole(communityId: ID!, userId: ID!, role: MemberRole!): GenericResponse!
-  removeMemberRole(communityId: ID!, userId: ID!): GenericResponse!
+  assignMemberRole(communityId: UUID!, userId: UUID!, role: MemberRole!): GenericResponse!
+  removeMemberRole(communityId: UUID!, userId: UUID!): GenericResponse!
 
-  banMember(communityId: ID!, userId: ID!, reason: String): GenericResponse!
-  unbanMember(communityId: ID!, userId: ID!): GenericResponse!
-
-  createCommunityPost(input: CreateCommunityPostInput!): CommunityPost!
-  updateCommunityPost(id: ID!, input: CreateCommunityPostInput!): CommunityPost!
-  deleteCommunityPost(id: ID!): Boolean!
-
-  likeCommunityPost(postId: ID!): GenericResponse!
-  unlikeCommunityPost(postId: ID!): GenericResponse!
-  bookmarkCommunityPost(postId: ID!): GenericResponse!
-  unbookmarkCommunityPost(postId: ID!): GenericResponse!
-
-  registerForEvent(postId: ID!): GenericResponse!
-  unregisterFromEvent(postId: ID!): GenericResponse!
+  banMember(communityId: UUID!, userId: UUID!, reason: String): GenericResponse!
+  unbanMember(communityId: UUID!, userId: UUID!): GenericResponse!
 }
