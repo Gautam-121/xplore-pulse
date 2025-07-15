@@ -46,22 +46,6 @@ module.exports = (sequelize, Sequelize) => {
             type: Sequelize.STRING(3),
             defaultValue: 'USD'
         },
-        // authorId: {
-        //     type: Sequelize.UUID,
-        //     allowNull: false,
-        //     references: {
-        //         model: User,
-        //         key: 'id'
-        //     }
-        // },
-        // communityId: {
-        //     type: Sequelize.UUID,
-        //     allowNull: false,
-        //     references: {
-        //         model: Community,
-        //         key: 'id'
-        //     }
-        // },
         likesCount: {
             type: Sequelize.INTEGER,
             defaultValue: 0
@@ -91,13 +75,6 @@ module.exports = (sequelize, Sequelize) => {
             type: Sequelize.BOOLEAN,
             defaultValue: true
         },
-        // approvedBy: {
-        //     type: Sequelize.UUID,
-        //     references: {
-        //         model: User,
-        //         key: 'id'
-        //     }
-        // },
         approvedAt: {
             type: Sequelize.DATE
         },

@@ -46,7 +46,6 @@ db.Community = require("../models/Community.js")(sequelize, Sequelize);
 db.CommunityMember = require("../models/CommunityMember.js")(sequelize, Sequelize);
 db.CommunityInterest = require("../models/CommunityInterest.js")(sequelize, Sequelize);
 db.CommunityPost = require("../models/CommunityPost.js")(sequelize, Sequelize);
-db.EventRegistration = require("../models/EventRegistration.js")(sequelize, Sequelize);
 db.PostBookmark = require("../models/PostBookmark.js")(sequelize, Sequelize);
 db.PostLike = require("../models/PostLike.js")(sequelize, Sequelize);
 
@@ -97,7 +96,6 @@ db.User.belongsToMany(db.Community, {
 db.User.hasMany(db.CommunityPost, { foreignKey: "authorId", as: "posts" });
 db.User.hasMany(db.PostLike, { foreignKey: "userId", as: "likedPosts" });
 db.User.hasMany(db.PostBookmark, { foreignKey: "userId", as: "bookmarkedPosts" });
-db.User.hasMany(db.EventRegistration, { foreignKey: "userId", as: "eventRegistrations" });
 
 // Interest ↔ Community (Many-to-Many)
 db.Interest.belongsToMany(db.Community, {
@@ -144,16 +142,13 @@ db.CommunityMember.belongsTo(db.Community, { foreignKey: "communityId", as: "com
 db.CommunityMember.belongsTo(db.User, { foreignKey: "invitedBy", as: "inviter" });
 db.CommunityMember.belongsTo(db.User, { foreignKey: "bannedBy", as: "banner" });
 
-// CommunityPost ↔ Author, Community, Approver, Likes, Bookmarks, EventRegistrations
+// CommunityPost ↔ Author, Community, Approver, Likes, Bookmarks
 db.CommunityPost.belongsTo(db.User, { foreignKey: "authorId", as: "author" });
 db.CommunityPost.belongsTo(db.Community, { foreignKey: "communityId", as: "community" });
 db.CommunityPost.belongsTo(db.User, { foreignKey: "approvedBy", as: "approver" });
 db.CommunityPost.hasMany(db.PostLike, { foreignKey: "postId", as: "likes" });
 db.CommunityPost.hasMany(db.PostBookmark, { foreignKey: "postId", as: "bookmarks" });
-db.CommunityPost.hasMany(db.EventRegistration, {
-  foreignKey: "postId",
-  as: "eventRegistrations",
-});
+
 
 // PostLike ↔ User & Post
 db.PostLike.belongsTo(db.User, { foreignKey: "userId", as: "user" });
@@ -163,8 +158,5 @@ db.PostLike.belongsTo(db.CommunityPost, { foreignKey: "postId", as: "post" });
 db.PostBookmark.belongsTo(db.User, { foreignKey: "userId", as: "user" });
 db.PostBookmark.belongsTo(db.CommunityPost, { foreignKey: "postId", as: "post" });
 
-// EventRegistration ↔ User & Post
-db.EventRegistration.belongsTo(db.User, { foreignKey: "userId", as: "user" });
-db.EventRegistration.belongsTo(db.CommunityPost, { foreignKey: "postId", as: "post" });
 
 module.exports = db;

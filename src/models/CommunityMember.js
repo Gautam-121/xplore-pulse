@@ -6,22 +6,6 @@ module.exports = (sequelize, Sequelize) => {
                 defaultValue: Sequelize.UUIDV4,
                 primaryKey: true
             },
-            // userId: {
-            //     type: Sequelize.UUID,
-            //     allowNull: false,
-            //     references: {
-            //         model: User,
-            //         key: 'id'
-            //     }
-            // },
-            // communityId: {
-            //     type: Sequelize.UUID,
-            //     allowNull: false,
-            //     references: {
-            //         model: Community,
-            //         key: 'id'
-            //     }
-            // },
             role: {
                 type: Sequelize.ENUM('OWNER', 'ADMIN', 'MODERATOR', 'MEMBER'),
                 defaultValue: 'MEMBER'
@@ -40,26 +24,12 @@ module.exports = (sequelize, Sequelize) => {
             lastActiveAt: {
                 type: Sequelize.DATE
             },
-            // invitedBy: {
-            //     type: Sequelize.UUID,
-            //     references: {
-            //         model: User,
-            //         key: 'id'
-            //     }
-            // },
             banReason: {
                 type: Sequelize.TEXT
             },
             bannedAt: {
                 type: Sequelize.DATE
             },
-            // bannedBy: {
-            //     type: Sequelize.UUID,
-            //     references: {
-            //         model: User,
-            //         key: 'id'
-            //     }
-            // }
         }, {
         timestamps: true,
         indexes: [

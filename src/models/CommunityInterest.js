@@ -5,22 +5,6 @@ module.exports = (sequelize, Sequelize) => {
             defaultValue: Sequelize.UUIDV4,
             primaryKey: true
         },
-        // communityId: {
-        //     type: Sequelize.UUID,
-        //     references: {
-        //         model: Community,
-        //         key: 'id'
-        //     },
-        //     primaryKey: true
-        // },
-        // interestId: {
-        //     type: Sequelize.UUID,
-        //     references: {
-        //         model: Interest,
-        //         key: 'id'
-        //     },
-        //     primaryKey: true
-        // }
     }, {
         timestamps: true
     });

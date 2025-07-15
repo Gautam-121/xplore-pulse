@@ -735,24 +735,7 @@ const resolvers = {
           return null;
         }
       }
-    },
-
-    EventDetails: {
-      isRegistered: async (parent, args, context) => {
-        const { user, loaders } = context;
-        if (!user) return false;
-        
-        try {
-          // For now, use a simple check - could be optimized with DataLoader
-          const registrations = await loaders.eventRegistrationsLoader.load(parent.postId);
-          return registrations.some(registration => registration.userId === user.id);
-        } catch (error) {
-          logger.error('Error loading event registration status', { error, userId: user.id, postId: parent.postId });
-          return false;
-        }
-      }
-    }
-  
+    },  
 }
 
 module.exports = resolvers
