@@ -1,0 +1,40 @@
+version: '3.8'
+services:
+  app:
+    build: .
+    container_name: xplore-pulse-app
+    restart: unless-stopped
+    volumes:
+      - .:/usr/src/app
+      - /usr/src/app/node_modules
+    ports:
+      - "4000:4000"
+    env_file:
+      - .env
+    depends_on:
+      - db
+      - redis
+    command: npx nodemon src/server.js
+
+  db:
+    image: postgres:15-alpine
+    container_name: xplore-pulse-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DATABASE}
+      POSTGRES_USER: ${DB_USERNAME}
+      POSTGRES_PASSWORD: ${PASSWORD}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    container_name: xplore-pulse-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+
+volumes:
+  pgdata: 
