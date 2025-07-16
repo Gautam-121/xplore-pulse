@@ -10,7 +10,7 @@ services:
     ports:
       - "4000:4000"
     env_file:
-      - .env
+      - ./.env
     depends_on:
       - db
       - redis
@@ -25,7 +25,7 @@ services:
       POSTGRES_USER: ${DB_USERNAME}
       POSTGRES_PASSWORD: ${PASSWORD}
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
 
