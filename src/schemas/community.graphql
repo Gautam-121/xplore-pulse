@@ -26,7 +26,6 @@
     isAdmin: Boolean!              # Is the current user an admin
     isModerator: Boolean!          # Is the current user a moderator
     canPost: Boolean!              # Whether the user can post
-    canCreateEvents: Boolean!      # Whether the user can create events
     createdAt: Date!
     updatedAt: Date!
  }
@@ -98,7 +97,6 @@ type CommunityPost {
   sharesCount: Int!
   isLiked: Boolean!             # Is this post liked by current user
   isBookmarked: Boolean!        # Is this post bookmarked by current user
-  eventDetails: EventDetails    # If type is EVENT
   tags: [String]                # Hashtags or keywords
   createdAt: Date!
   updatedAt: Date!
@@ -115,30 +113,6 @@ enum PostType {
   POLL
 }
 
-# Details specific to event posts
-type EventDetails {
-  startDate: Date!
-  endDate: Date
-  eventType: EventType!
-  location: Location
-  onlineLink: String
-  registrationRequired: Boolean!
-  maxAttendees: Int
-  registrationCount: Int!
-  registrationDeadline: Date
-  isRegistered: Boolean!         # Is the current user registered
-  ticketPrice: Float
-  currency: Currency
-  agenda: String
-  requirements: String
-}
-
-# Event format enum
-enum EventType {
-  OFFLINE
-  ONLINE
-  HYBRID
-}
 
 # Pagination type for all connections
 type PaginationInfo {
@@ -249,24 +223,9 @@ input CreateCommunityPostInput {
   isPaid: Boolean! = false
   price: Float
   currency: Currency = "USD"
-  eventDetails: EventDetailsInput
   tags: [String]
 }
 
-input EventDetailsInput {
-  startDate: Date!
-  endDate: Date
-  eventType: EventType!
-  location: LocationInput
-  onlineLink: String
-  registrationRequired: Boolean! = false
-  maxAttendees: Int
-  registrationDeadline: Date
-  ticketPrice: Float
-  currency: Currency = "USD"
-  agenda: String
-  requirements: String
-}
 
 # Query operations
 type Query {
