@@ -5,15 +5,22 @@ module.exports = (sequelize, Sequelize) => {
           defaultValue: Sequelize.UUIDV4,
           primaryKey: true
         },
-  
+        postId: {
+          type: Sequelize.UUID,
+          allowNull: false,
+          references: { model: 'CommunityPosts', key: 'id' }
+        },
+        userId: {
+          type: Sequelize.UUID,
+          allowNull: false
+        }
       }, {
         timestamps: true,
         indexes: [
-          {
-            unique: true,
-            fields: ['userId', 'postId']
-          }
+          { fields: ['postId'] },
+          { fields: ['userId'] },
+          { fields: ['userId', 'postId'], unique: true }
         ]
       });
-    return PostBookmark
+    return PostBookmark;
 };

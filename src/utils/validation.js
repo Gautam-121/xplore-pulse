@@ -238,7 +238,8 @@ class ValidationService {
       deviceId,
       deviceName,
       deviceType,
-      osVersion
+      osVersion,
+      fcmToken
     } = deviceInfo;
 
     if (!appVersion || !deviceId || !deviceName || !deviceType || !osVersion) {
@@ -278,6 +279,7 @@ class ValidationService {
         extensions: { code: 'BAD_USER_INPUT', field: 'deviceInfo.osVersion' }
       });
     }
+    if(token && this.validateFCMToken(fcmToken))
 
     return true;
   }

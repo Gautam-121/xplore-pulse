@@ -1,0 +1,171 @@
+# Community Post–related GraphQL schema
+
+# --- Types ---
+type CommunityPost {
+  id: UUID!
+  type: PostType!
+  title: String
+  content: String
+  media: [Media!]!
+  linkUrl: String
+  linkTitle: String
+  linkDescription: String
+  linkImageUrl: String
+  quizzes: [Quiz!]
+  pollOptions: [PollOption]
+  pollCount: Int
+  tags: [String]
+  mentions: [User!]
+  visibility: PostVisibility
+  isSponsored: Boolean
+  reactions: [Reaction!]
+  isBookmarked: Boolean!
+  author: User!
+  community: Community!
+  createdAt: Date!
+  updatedAt: Date!
+}
+
+# --- Enums ---
+enum PostType {
+  TEXT
+  IMAGE
+  VIDEO
+  LINK
+  POLL
+  EDUCATIONAL
+  QUIZ
+  MIXED
+}
+
+enum MediaType {
+  IMAGE
+  VIDEO
+}
+
+enum ReactionType {
+  LIKE
+  LOVE
+  LAUGH
+  WOW
+  SAD
+  ANGRY
+}
+
+enum PostVisibility {
+  PUBLIC
+  MEMBERS_ONLY
+  ADMINS_ONLY
+  PRIVATE
+}
+
+# --- Inputs ---
+input CreateCommunityPostInput {
+  communityId: UUID!
+  type: PostType!
+  title: String
+  content: String
+  media: [MediaInput!]!
+  linkUrl: String
+  linkTitle: String
+  linkDescription: String
+  linkImageUrl: String
+  quizzes: [QuizInput!]
+  pollOptions: [PollOptionInput]
+  tags: [String]
+  mentions: [UUID]
+  visibility: PostVisibility
+  isSponsored: Boolean
+}
+
+input MediaInput {
+  type: MediaType!
+  url: String!
+  thumbnailUrl: String
+  duration: Int
+  altText: String
+}
+
+input QuizInput {
+  id: UUID
+  question: String!
+  options: [QuizOptionInput!]!
+  correctOptionId: UUID
+}
+
+input QuizOptionInput {
+  id: UUID
+  text: String!
+}
+
+input PollOptionInput {
+  text: String!
+}
+
+# --- Supporting Types ---
+type Media {
+  type: MediaType!
+  url: String!
+  thumbnailUrl: String
+  duration: Int
+  altText: String
+}
+
+type Quiz {
+  id: UUID!
+  question: String!
+  options: [QuizOption!]!
+  correctOptionId: UUID
+}
+
+type QuizOption {
+  id: UUID!
+  text: String!
+}
+
+type QuizAnswerResponse {
+  quizId: UUID!
+  userId: UUID!
+  optionId: UUID!
+  correctOptionId: UUID
+}
+
+type QuizOptionResult {
+  id: UUID!
+  text: String!
+  answerCount: Int!
+}
+
+type PollOption {
+  id: UUID!
+  text: String!
+  voteCount: Int!
+}
+
+type Reaction {
+  type: ReactionType!
+  count: Int!
+}
+
+type GenericResponse {
+  success: Boolean!
+  message: String
+}
+
+# --- Mutations ---
+type Mutation {
+  createCommunityPost(input: CreateCommunityPostInput!): CommunityPost!
+  reactToPost(postId: UUID!, type: ReactionType!): [Reaction!]!
+  unreactToPost(postId: UUID!): [Reaction!]!
+  bookmarkPost(postId: UUID!): GenericResponse!
+  unbookmarkPost(postId: UUID!): GenericResponse!
+  voteOnPoll(postId: UUID!, optionId: UUID!): [PollOption!]!
+  answerQuiz(postId: UUID!, quizId: UUID!, optionId: UUID!): QuizAnswerResponse!
+}
+
+# --- Queries ---
+type Query {
+  getPollResults(postId: UUID!): [PollOption!]!
+  getQuizResults(postId: UUID!, quizId: UUID!): [QuizOptionResult!]!
+  getMentions(postId: UUID!): [User!]!
+} 

@@ -5,24 +5,41 @@ module.exports = (sequelize, Sequelize) => {
             defaultValue: Sequelize.UUIDV4,
             primaryKey: true
         },
+        communityId: {
+            type: Sequelize.UUID,
+            allowNull: false
+        },
+        authorId: {
+            type: Sequelize.UUID,
+            allowNull: false
+        },
         type: {
-            type: Sequelize.ENUM('TEXT', 'IMAGE', 'VIDEO', 'LINK', 'EVENT', 'EDUCATIONAL', 'POLL'),
+            type: Sequelize.ENUM('TEXT', 'IMAGE', 'VIDEO', 'LINK', 'POLL', 'EDUCATIONAL', 'QUIZ', 'MIXED'),
             allowNull: false
         },
         title: {
-            type: Sequelize.STRING,
-            allowNull: false
+            type: Sequelize.STRING
         },
         content: {
             type: Sequelize.TEXT
         },
-        imageUrls: {
-            type: Sequelize.ARRAY(Sequelize.TEXT),
+        media: {
+            type: Sequelize.JSONB, // Array of { type, url, thumbnailUrl, duration, altText }
             defaultValue: []
         },
-        videoUrl: {
-            type: Sequelize.TEXT
+        quizzes: {
+            type: Sequelize.JSONB, // Array of quiz definitions (id, question, options, correctOptionId)
+            defaultValue: []
         },
+        pollOptions: {
+            type: Sequelize.JSONB, // Array of { id, text, voteCount }
+            defaultValue: []
+        },
+        pollCount: {
+            type: Sequelize.INTEGER,
+            defaultValue: 0
+        },
+        // Link preview fields for LINK type posts
         linkUrl: {
             type: Sequelize.TEXT
         },
@@ -35,73 +52,34 @@ module.exports = (sequelize, Sequelize) => {
         linkImageUrl: {
             type: Sequelize.TEXT
         },
-        isPaid: {
-            type: Sequelize.BOOLEAN,
-            defaultValue: false
-        },
-        price: {
-            type: Sequelize.DECIMAL(10, 2)
-        },
-        currency: {
-            type: Sequelize.STRING(3),
-            defaultValue: 'USD'
-        },
-        likesCount: {
-            type: Sequelize.INTEGER,
-            defaultValue: 0
-        },
-        commentsCount: {
-            type: Sequelize.INTEGER,
-            defaultValue: 0
-        },
-        sharesCount: {
-            type: Sequelize.INTEGER,
-            defaultValue: 0
-        },
-        viewsCount: {
-            type: Sequelize.INTEGER,
-            defaultValue: 0
-        },
-        // Event details as JSONB
-        eventDetails: {
-            type: Sequelize.JSONB,
-            defaultValue: {}
-        },
         tags: {
             type: Sequelize.ARRAY(Sequelize.STRING),
             defaultValue: []
         },
-        isApproved: {
-            type: Sequelize.BOOLEAN,
-            defaultValue: true
+        visibility: {
+            type: Sequelize.ENUM('PUBLIC', 'MEMBERS_ONLY', 'ADMINS_ONLY', 'PRIVATE'),
+            defaultValue: 'PUBLIC'
         },
-        approvedAt: {
-            type: Sequelize.DATE
-        },
-        isArchived: {
+        isSponsored: {
             type: Sequelize.BOOLEAN,
             defaultValue: false
+        },
+        createdAt: {
+            type: Sequelize.DATE,
+            defaultValue: Sequelize.NOW
+        },
+        updatedAt: {
+            type: Sequelize.DATE,
+            defaultValue: Sequelize.NOW
         }
+        // Mentions, reactions, pollVotes, quizResponses are handled in separate models for scalability
     }, {
         timestamps: true,
         indexes: [
-            {
-                fields: ['communityId', 'createdAt']
-            },
-            {
-                fields: ['authorId']
-            },
-            {
-                fields: ['type']
-            },
-            {
-                fields: ['isPaid']
-            },
-            {
-                name: 'idx_community_post_tags_gin',
-                using: 'gin',
-                fields: ['tags']
-            }
+            { fields: ['communityId', 'createdAt'] },
+            { fields: ['authorId'] },
+            { fields: ['type'] },
+            { fields: ['visibility'] }
         ]
     });
     return CommunityPost
