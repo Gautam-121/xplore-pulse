@@ -279,7 +279,7 @@ class ValidationService {
         extensions: { code: 'BAD_USER_INPUT', field: 'deviceInfo.osVersion' }
       });
     }
-    if(token && this.validateFCMToken(fcmToken))
+    if(fcmToken && this.validateFCMToken(fcmToken))
 
     return true;
   }

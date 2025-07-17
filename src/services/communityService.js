@@ -11,6 +11,8 @@ const mailerService = require('./mailerService');
 const { Op } = require("sequelize")
 const { GraphQLError } = require('graphql');
 const logger = require('../utils/logger');
+const ValidationService = require('../utils/validation');
+
 
 const communityService = {
 
@@ -91,7 +93,7 @@ const communityService = {
             // Compose email
             const subject = `You have been unbanned from "${community.name}"`;
             const message = `Hi ${user.name || user.email},\n\nYou have been unbanned from the community "${community.name}". You may now request to join again.\n\nBest regards,\nThe Xplore Pulse Team`;
-           if(user.email){
+           if(user.email && user.isEmailVerified){
              // Send email
              await mailerService.sendEmail({
                 to: user.email,
@@ -117,7 +119,7 @@ const communityService = {
             const message = `Hi ${user.name || user.email},\n\nYou have been banned from the community "${community.name}".${reason ? `\n\nReason: ${reason}` : ''}\n\nIf you believe this was a mistake, please contact the community owner.\n\nBest regards,\nThe Xplore Pulse Team`;
 
             // Send email
-            if(user.email){
+            if(user.email && user.isEmailVerified){
                 await mailerService.sendEmail({
                     to: user.email,
                     subject,
@@ -143,12 +145,14 @@ const communityService = {
             const html = `<p>Hi ${user.name || user.email},</p>\n<p>Your special role in the community <b>${community.name}</b> has been removed. You are now a regular <b>MEMBER</b>.</p>\n<p>Best regards,<br/>The Xplore Pulse Team</p>`;
 
             // Send email
-            await mailerService.sendEmail({
-                to: user.email,
-                subject,
-                text: message,
-                html
-            });
+            if(user.email && user.isEmailVerified){
+                await mailerService.sendEmail({
+                    to: user.email,
+                    subject,
+                    text: message,
+                    html
+                });
+            }
         } catch (err) {
             // Log but do not throw
             console.error('Failed to send role removal notification email:', err);
@@ -166,7 +170,7 @@ const communityService = {
             const subject = `Your role in "${community.name}" has been updated to ${role}`;
             const message = `Hi ${user.name || user.email},\n\nYour role in the community "${community.name}" has been updated to ${role}.\n\nBest regards,\nThe Xplore Pulse Team`;
 
-            if(user.email){
+            if(user.email && user.isEmailVerified){
                 await mailerService.sendEmail({
                     to: user.email,
                     subject,
@@ -191,7 +195,7 @@ const communityService = {
             const message = `Hi ${user.name || user.email},\n\nWe regret to inform you that your request to join the community "${community.name}" has been rejected. You may try joining other communities or contact the community owner for more information.\n\nBest regards,\nThe Xplore Pulse Team`;
 
             // Send email
-            if(user.email){
+            if(user.email && user.isEmailVerified){
                 await mailerService.sendEmail({
                     to: user.email,
                     subject,
@@ -222,7 +226,7 @@ const communityService = {
             // Send email to each admin/owner
             for (const admin of admins) {
                 const adminUser = admin.user;
-                if (adminUser && adminUser.email) {
+                if (adminUser && adminUser.email && adminUser.isEmailVerified) {
                     try {
                         await mailerService.sendEmail({
                             to: adminUser.email,
@@ -256,7 +260,7 @@ const communityService = {
         // Send email to each admin/owner
         for (const admin of admins) {
             const adminUser = admin.user;
-            if (adminUser && adminUser.email) {
+            if (adminUser && adminUser.email && admin.isEmailVerified) {
                 try {
                     await mailerService.sendEmail({
                         to: adminUser.email,
@@ -283,7 +287,7 @@ const communityService = {
             // Compose email
             const subject = `Your request to join "${community.name}" has been approved!`;
             // Send email
-            if(user.email){
+            if(user.email && user.isEmailVerified){
                 await mailerService.sendEmail({
                     to: user.email,
                     subject,
@@ -354,7 +358,7 @@ const communityService = {
                 communityId,
                 userId,
                 status: 'APPROVED',
-                role: { [Op.in]: ['OWNER', 'ADMIN'] }
+                role: { [Op.in]: ['ADMIN'] }
             },
             transaction
         });
@@ -368,7 +372,7 @@ const communityService = {
                 communityId,
                 userId,
                 status: 'APPROVED',
-                role: { [Op.in]: ['OWNER', 'ADMIN', 'MODERATOR'] }
+                role: { [Op.in]: ['MODERATOR'] }
             },
             transaction
         });
@@ -433,11 +437,11 @@ const communityService = {
         // 4. Moderators can post if you want (optional, or treat as members)
         if (membership.role === 'MODERATOR') {
             // If you want to restrict moderators, add logic here
-            return true;
+            return false;
         }
         // 5. Members: check community settings
         if (membership.role === 'MEMBER') {
-            if (community.settings && community.settings.allowMemberPosts) {
+            if (community?.settings && community?.settings?.allowMemberPosts) {
                 return true;
             } else {
                 return false
@@ -800,12 +804,12 @@ const communityService = {
             logger.info('Fetched complete community with relations', { communityId: community.id });
 
             // Set computed properties
-            completeCommunity.isOwner = completeCommunity.ownerId === input.ownerId;
-            completeCommunity.isAdmin = await this.isAdmin(completeCommunity.id, input.ownerId, transaction);
-            completeCommunity.isModerator = await this.isModerator(completeCommunity.id, input.ownerId, transaction);
-            completeCommunity.canCreateEvents = await this.canCreateEvents(completeCommunity.id, input.ownerId, transaction);
-            completeCommunity.canPost = await this.canPost(completeCommunity.id, input.ownerId, transaction);
-            completeCommunity.membershipStatus = await this.getMembershipStatus(completeCommunity.id, input.ownerId, transaction);
+            // completeCommunity.isOwner = completeCommunity.ownerId === input.ownerId;
+            // completeCommunity.isAdmin = await this.isAdmin(completeCommunity.id, input.ownerId, transaction);
+            // completeCommunity.isModerator = await this.isModerator(completeCommunity.id, input.ownerId, transaction);
+            // completeCommunity.canCreateEvents = await this.canCreateEvents(completeCommunity.id, input.ownerId, transaction);
+            // completeCommunity.canPost = await this.canPost(completeCommunity.id, input.ownerId, transaction);
+            // completeCommunity.membershipStatus = await this.getMembershipStatus(completeCommunity.id, input.ownerId, transaction);
 
             await transaction.commit();
             logger.info('Community creation transaction committed', { communityId: community.id });
@@ -919,7 +923,6 @@ const communityService = {
                 membershipStatus = 'PENDING';
                 joinedAt = null;
                 message = 'Join request sent. Awaiting approval from the community owner.';
-                // Notify admins/owner
                 await this.notifyAdminsOfNewRequest(communityId, userId, transaction);
             }
 
@@ -961,14 +964,14 @@ const communityService = {
         }
     },
   
-    async approveMemberRequest(communityId, userId) {
+    async approveMemberRequest(communityId, memberId , userId) {
         const transaction = await sequelize.transaction();
         try {
-            logger.info('Approving member request', { communityId, userId });
+            logger.info('Approving member request', { communityId, memberId });
             // 1. Validate input
-            if (!communityId || !userId) {
-                logger.warn('Missing communityId or userId in approveMemberRequest', { communityId, userId });
-                throw new GraphQLError('Missing communityId or userId', {
+            if (!communityId || !memberId) {
+                logger.warn('Missing communityId or memberId in approveMemberRequest', { communityId, memberId });
+                throw new GraphQLError('Missing communityId or memberId', {
                     extensions: { code: 'BAD_REQUEST_INPUT' }
                 });
             }
@@ -984,37 +987,46 @@ const communityService = {
 
             // 3. Find the membership
             const membership = await CommunityMember.findOne({
-                where: { communityId, userId },
+                where: { communityId, id: memberId },
                 transaction
             });
+
             if (!membership) {
-                logger.warn('Membership request not found in approveMemberRequest', { communityId, userId });
+                logger.warn('Membership request not found in approveMemberRequest', { communityId, memberId });
                 throw new GraphQLError('Membership request not found', {
                     extensions: { code: 'MEMBERSHIP_NOT_FOUND' }
                 });
             }
 
+            if (membership.userId === userId) {
+                throw new GraphQLError(
+                    "You cannot approve your own membership request.", {
+                        extensions: { code: "FORBIDDEN_SELF_ACTION" }
+                    }
+                );
+            }
+
             // 4. Check if already approved or not pending
             if (membership.status === 'APPROVED') {
-                logger.warn('Membership already approved in approveMemberRequest', { communityId, userId });
+                logger.warn('Membership already approved in approveMemberRequest', { communityId, memberId });
                 throw new GraphQLError('User is already a member of the community', {
                     extensions: { code: 'ALREADY_MEMBER' }
                 });
             }
             if (membership.status === 'BANNED') {
-                logger.warn('Attempt to approve banned member in approveMemberRequest', { communityId, userId });
+                logger.warn('Attempt to approve banned member in approveMemberRequest', { communityId, memberId });
                 throw new GraphQLError('User is banned from this community and cannot be approved.', {
                     extensions: { code: 'BANNED' }
                 });
             }
             if (membership.status === 'REJECTED') {
-                logger.warn('Attempt to approve rejected member in approveMemberRequest', { communityId, userId });
+                logger.warn('Attempt to approve rejected member in approveMemberRequest', { communityId, memberId });
                 throw new GraphQLError('Membership request was rejected and cannot be approved.', {
                     extensions: { code: 'REJECTED' }
                 });
             }
             if (membership.status !== 'PENDING') {
-                logger.warn('Membership request is not pending in approveMemberRequest', { communityId, userId, status: membership.status });
+                logger.warn('Membership request is not pending in approveMemberRequest', { communityId, memberId, status: membership.status });
                 throw new GraphQLError('Membership request is not pending', {
                     extensions: { code: 'NOT_PENDING' }
                 });
@@ -1026,7 +1038,7 @@ const communityService = {
                 membership.joinedAt = new Date();
                 await membership.save({ transaction });
             } catch (saveErr) {
-                logger.error('Failed to save approved membership in approveMemberRequest', { saveErr, communityId, userId });
+                logger.error('Failed to save approved membership in approveMemberRequest', { saveErr, communityId, memberId });
                 throw saveErr;
             }
 
@@ -1051,7 +1063,7 @@ const communityService = {
             }
 
             await transaction.commit();
-            logger.info('Membership request approved successfully', { communityId, userId });
+            logger.info('Membership request approved successfully', { communityId, memberId });
             return {
                 success: true,
                 message: 'Membership request approved successfully.'
@@ -1059,9 +1071,9 @@ const communityService = {
         } catch (error) {
             if (transaction && !transaction.finished) {
                 await transaction.rollback();
-                logger.warn('approveMemberRequest transaction rolled back', { communityId, userId });
+                logger.warn('approveMemberRequest transaction rolled back', { communityId, memberId });
             }
-            logger.error('Error in approveMemberRequest', { error, communityId, userId });
+            logger.error('Error in approveMemberRequest', { error, communityId, memberId });
             if (error instanceof GraphQLError) throw error;
             if (error.name === 'SequelizeUniqueConstraintError') {
                 throw new GraphQLError('Could not approve member due to related records.', {
@@ -1262,7 +1274,7 @@ const communityService = {
         }
     },
     
-    async getCommunityMembers(communityId, limit, cursor, role, status) {
+    async getCommunityMembers(communityId, limit, cursor, role, status, currentUserId) {
         const VALID_ROLES = ['OWNER', 'ADMIN', 'MODERATOR', 'MEMBER'];
         const VALID_STATUSES = ['PENDING', 'APPROVED', 'REJECTED', 'BANNED'];
         const DEFAULT_LIMIT = 20;
@@ -1305,6 +1317,9 @@ const communityService = {
             const where = { communityId };
             if (role) where.role = role;
             if (status) where.status = status;
+            if (currentUserId) {
+                where.userId = { [Op.ne]: currentUserId };
+            }
             // Cursor-based pagination
             let cursorCondition = {};
             if (cursor) {
@@ -1689,6 +1704,47 @@ const communityService = {
                 });
             }
 
+            // --- isPaid/price/currency edge case handling ---//
+            if (input.isPaid === false) {
+                // If making free, null price/currency
+                input.price = null;
+                input.currency = null;
+            } else if (input.isPaid === true) {
+                // If making paid, require and validate price/currency
+                if (input.price === undefined) {
+                    throw new GraphQLError('Price is required for paid communities', {
+                        extensions: { code: 'INVALID_INPUT', field: 'price' },
+                    });
+                }
+                if (input.currency === undefined) {
+                    throw new GraphQLError('Currency is required for paid communities', {
+                        extensions: { code: 'INVALID_INPUT', field: 'currency' },
+                    });
+                }
+                ValidationService.validatePrice(input.price);
+                ValidationService.validateCurrency(input.currency);
+            } else if (input.price !== undefined || input.currency !== undefined) {
+                // isPaid not provided, but price/currency is being updated
+                const isPaid =
+                    input.isPaid !== undefined
+                        ? input.isPaid
+                        : community.isPaid;
+                if (!isPaid) {
+                    throw new GraphQLError(
+                        'Cannot set price or currency for a free community (isPaid: false)',
+                        {
+                            extensions: { code: 'INVALID_INPUT', field: 'isPaid' },
+                        }
+                    );
+                }
+                if (input.price !== undefined) {
+                    ValidationService.validatePrice(input.price);
+                }
+                if (input.currency !== undefined) {
+                    ValidationService.validateCurrency(input.currency);
+                }
+            }
+
             // New: Use imageUrl and coverImageUrl as URLs (strings) directly
             // The client should upload files first using uploadFile mutation, then pass the URLs here
 
@@ -1781,13 +1837,6 @@ const communityService = {
                 ],
                 transaction
             });
-
-            updatedCommunity.isOwner = updatedCommunity.ownerId === userId
-            updatedCommunity.isAdmin = await this.isAdmin(updatedCommunity.id, userId, transaction)
-            updatedCommunity.isModerator = await this.isModerator(updatedCommunity.id, userId, transaction)
-            updatedCommunity.canCreateEvents = await this.canCreateEvents(updatedCommunity.id, userId, transaction)
-            updatedCommunity.canPost = await this.canPost(updatedCommunity.id, userId, transaction)
-            updatedCommunity.membershipStatus = await this.getMembershipStatus(updatedCommunity.id, userId, transaction)
 
             await transaction.commit()
             return updatedCommunity;
@@ -2085,14 +2134,14 @@ const communityService = {
         }
     },
 
-    async rejectMemberRequest(communityId, userId) {
+    async rejectMemberRequest(communityId, memberId , userId) {
         const transaction = await sequelize.transaction();
         try {
-            logger.info('Rejecting member request', { communityId, userId });
+            logger.info('Rejecting member request', { communityId, memberId });
             // 1. Validate input
-            if (!communityId || !userId) {
-                logger.warn('Missing communityId or userId in rejectMemberRequest', { communityId, userId });
-                throw new GraphQLError('Missing communityId or userId', {
+            if (!communityId || !memberId) {
+                logger.warn('Missing communityId or memberId in rejectMemberRequest', { communityId, memberId });
+                throw new GraphQLError('Missing communityId or memberId', {
                     extensions: { code: 'BAD_REQUEST_INPUT' }
                 });
             }
@@ -2108,37 +2157,46 @@ const communityService = {
 
             // 3. Find the membership
             const membership = await CommunityMember.findOne({
-                where: { communityId, userId },
+                where: { communityId, id: memberId },
                 transaction
             });
+
             if (!membership) {
-                logger.warn('Membership request not found in rejectMemberRequest', { communityId, userId });
+                logger.warn('Membership request not found in rejectMemberRequest', { communityId, memberId });
                 throw new GraphQLError('Membership request not found', {
                     extensions: { code: 'MEMBERSHIP_NOT_FOUND' }
                 });
             }
 
+            if (membership.userId === userId) {
+                throw new GraphQLError(
+                    "You cannot remove your own membership request.", {
+                        extensions: { code: "FORBIDDEN_SELF_ACTION" }
+                    }
+                );
+            }
+
             // 4. Check if already rejected, banned, or not pending
             if (membership.status === 'REJECTED') {
-                logger.warn('Membership already rejected in rejectMemberRequest', { communityId, userId });
+                logger.warn('Membership already rejected in rejectMemberRequest', { communityId, memberId });
                 throw new GraphQLError('Membership request is already rejected', {
                     extensions: { code: 'ALREADY_REJECTED' }
                 });
             }
             if (membership.status === 'BANNED') {
-                logger.warn('Attempt to reject banned member in rejectMemberRequest', { communityId, userId });
+                logger.warn('Attempt to reject banned member in rejectMemberRequest', { communityId, memberId });
                 throw new GraphQLError('User is banned from this community and cannot be rejected.', {
                     extensions: { code: 'BANNED' }
                 });
             }
             if (membership.status === 'APPROVED') {
-                logger.warn('Attempt to reject already approved member in rejectMemberRequest', { communityId, userId });
+                logger.warn('Attempt to reject already approved member in rejectMemberRequest', { communityId, memberId });
                 throw new GraphQLError('User is already a member of the community', {
                     extensions: { code: 'ALREADY_MEMBER' }
                 });
             }
             if (membership.status !== 'PENDING') {
-                logger.warn('Membership request is not pending in rejectMemberRequest', { communityId, userId, status: membership.status });
+                logger.warn('Membership request is not pending in rejectMemberRequest', { communityId, memberId, status: membership.status });
                 throw new GraphQLError('Membership request is not pending', {
                     extensions: { code: 'NOT_PENDING' }
                 });
@@ -2149,7 +2207,7 @@ const communityService = {
                 membership.status = 'REJECTED';
                 await membership.save({ transaction });
             } catch (saveErr) {
-                logger.error('Failed to save rejected membership in rejectMemberRequest', { saveErr, communityId, userId });
+                logger.error('Failed to save rejected membership in rejectMemberRequest', { saveErr, communityId, memberId });
                 throw saveErr;
             }
 
@@ -2162,7 +2220,7 @@ const communityService = {
             }
 
             await transaction.commit();
-            logger.info('Membership request rejected successfully', { communityId, userId });
+            logger.info('Membership request rejected successfully', { communityId, memberId });
             return {
                 success: true,
                 message: 'Membership request rejected successfully.'
@@ -2170,9 +2228,9 @@ const communityService = {
         } catch (error) {
             if (transaction && !transaction.finished) {
                 await transaction.rollback();
-                logger.warn('rejectMemberRequest transaction rolled back', { communityId, userId });
+                logger.warn('rejectMemberRequest transaction rolled back', { communityId, memberId });
             }
-            logger.error('Error in rejectMemberRequest', { error, communityId, userId });
+            logger.error('Error in rejectMemberRequest', { error, communityId, memberId });
             if (error instanceof GraphQLError) throw error;
             if (error.name === 'SequelizeUniqueConstraintError') {
                 throw new GraphQLError('Could not reject member due to related records.', {
@@ -2190,14 +2248,14 @@ const communityService = {
         }
     },
 
-    async assignMemberRole(communityId, userId, role) {
+    async assignMemberRole(communityId, memberId, userId, role) {
         const transaction = await sequelize.transaction();
         try {
-            logger.info('Assigning member role', { communityId, userId, role });
+            logger.info('Assigning member role', { communityId, memberId, role });
             // 1. Validate input
-            if (!communityId || !userId || !role) {
-                logger.warn('Missing communityId, userId, or role in assignMemberRole', { communityId, userId, role });
-                throw new GraphQLError('Missing communityId, userId, or role', {
+            if (!communityId || !memberId || !role) {
+                logger.warn('Missing communityId, memberId, or role in assignMemberRole', { communityId, memberId, role });
+                throw new GraphQLError('Missing communityId, memberId, or role', {
                     extensions: { code: 'BAD_REQUEST_INPUT' }
                 });
             }
@@ -2219,19 +2277,26 @@ const communityService = {
 
             // 3. Find the membership
             const membership = await CommunityMember.findOne({
-                where: { communityId, userId },
+                where: { communityId, id: memberId },
                 transaction
             });
             if (!membership) {
-                logger.warn('Membership not found in assignMemberRole', { communityId, userId });
+                logger.warn('Membership not found in assignMemberRole', { communityId, memberId });
                 throw new GraphQLError('Membership not found', {
                     extensions: { code: 'MEMBERSHIP_NOT_FOUND' }
                 });
             }
 
+            if(membership.userId === userId){
+                logger.warn('Attempt to self-assign-role in assignMemberRole', { communityId, userId });
+                throw new GraphQLError('You cannot assign role yourself', {
+                  extensions: { code: 'CANNOT_ASSIGN_SELF' }
+                });
+              }
+
             // 4. Only allow role assignment for APPROVED members
             if (membership.status !== 'APPROVED') {
-                logger.warn('Attempt to assign role to non-approved member in assignMemberRole', { communityId, userId, status: membership.status });
+                logger.warn('Attempt to assign role to non-approved member in assignMemberRole', { communityId, memberId, status: membership.status });
                 throw new GraphQLError('Only approved members can be assigned roles', {
                     extensions: { code: 'MEMBER_NOT_APPROVED' }
                 });
@@ -2239,7 +2304,7 @@ const communityService = {
 
             // 4.5. Prevent assigning the same role
             if (membership.role === role) {
-                logger.warn('Attempt to assign already assigned role in assignMemberRole', { communityId, userId, role });
+                logger.warn('Attempt to assign already assigned role in assignMemberRole', { communityId, memberId, role });
                 throw new GraphQLError(`User is already assigned the role ${role}`, {
                     extensions: { code: 'ALREADY_ASSIGNED_ROLE' }
                 });
@@ -2247,7 +2312,7 @@ const communityService = {
 
             // 5. Prevent assigning OWNER role to anyone but the current owner
             if (role === 'OWNER' && community.ownerId !== userId) {
-                logger.warn('Attempt to assign OWNER role to non-owner in assignMemberRole', { communityId, userId });
+                logger.warn('Attempt to assign OWNER role to non-owner in assignMemberRole', { communityId, memberId });
                 throw new GraphQLError('Only the current owner can be assigned the OWNER role', {
                     extensions: { code: 'OWNER_ASSIGNMENT_NOT_ALLOWED' }
                 });
@@ -2265,7 +2330,7 @@ const communityService = {
                     transaction
                 });
                 if (otherOwners === 0) {
-                    logger.warn('Attempt to demote the only owner in assignMemberRole', { communityId, userId });
+                    logger.warn('Attempt to demote the only owner in assignMemberRole', { communityId, memberId });
                     throw new GraphQLError('Cannot demote the only owner of the community', {
                         extensions: { code: 'CANNOT_DEMOTE_ONLY_OWNER' }
                     });
@@ -2274,13 +2339,13 @@ const communityService = {
 
             // 7. Prevent assigning roles to banned or rejected members
             if (membership.status === 'BANNED') {
-                logger.warn('Attempt to assign role to banned member in assignMemberRole', { communityId, userId });
+                logger.warn('Attempt to assign role to banned member in assignMemberRole', { communityId, memberId });
                 throw new GraphQLError('Cannot assign roles to banned members', {
                     extensions: { code: 'BANNED' }
                 });
             }
             if (membership.status === 'REJECTED') {
-                logger.warn('Attempt to assign role to rejected member in assignMemberRole', { communityId, userId });
+                logger.warn('Attempt to assign role to rejected member in assignMemberRole', { communityId, memberId });
                 throw new GraphQLError('Cannot assign roles to rejected members', {
                     extensions: { code: 'REJECTED' }
                 });
@@ -2291,7 +2356,7 @@ const communityService = {
                 membership.role = role;
                 await membership.save({ transaction });
             } catch (saveErr) {
-                logger.error('Failed to save new role in assignMemberRole', { saveErr, communityId, userId, role });
+                logger.error('Failed to save new role in assignMemberRole', { saveErr, communityId, memberId, role });
                 throw saveErr;
             }
 
@@ -2304,7 +2369,7 @@ const communityService = {
             }
 
             await transaction.commit();
-            logger.info('Role updated successfully in assignMemberRole', { communityId, userId, role });
+            logger.info('Role updated successfully in assignMemberRole', { communityId, memberId, role });
             return {
                 success: true,
                 message: `Role updated to ${role} successfully.`
@@ -2312,9 +2377,9 @@ const communityService = {
         } catch (error) {
             if (transaction && !transaction.finished) {
                 await transaction.rollback();
-                logger.warn('assignMemberRole transaction rolled back', { communityId, userId, role });
+                logger.warn('assignMemberRole transaction rolled back', { communityId, memberId, role });
             }
-            logger.error('Error in assignMemberRole', { error, communityId, userId, role });
+            logger.error('Error in assignMemberRole', { error, communityId, memberId, role });
             if (error instanceof GraphQLError) throw error;
             if (error.name === 'SequelizeUniqueConstraintError') {
                 throw new GraphQLError('Could not assign role due to related records.', {
@@ -2332,14 +2397,14 @@ const communityService = {
         }
     },
 
-    async removeMemberRole(communityId, userId) {
+    async removeMemberRole(communityId, memberId , userId) {
         const transaction = await sequelize.transaction();
         try {
-            logger.info('Removing member role', { communityId, userId });
+            logger.info('Removing member role', { communityId, memberId });
             // 1. Validate input
-            if (!communityId || !userId) {
-                logger.warn('Missing communityId or userId in removeMemberRole', { communityId, userId });
-                throw new GraphQLError('Missing communityId or userId', {
+            if (!communityId || !memberId) {
+                logger.warn('Missing communityId or memberId in removeMemberRole', { communityId, memberId });
+                throw new GraphQLError('Missing communityId or memberId', {
                     extensions: { code: 'BAD_REQUEST_INPUT' }
                 });
             }
@@ -2355,19 +2420,26 @@ const communityService = {
 
             // 3. Find the membership
             const membership = await CommunityMember.findOne({
-                where: { communityId, userId },
+                where: { communityId, id: memberId },
                 transaction
             });
             if (!membership) {
-                logger.warn('Membership not found in removeMemberRole', { communityId, userId });
+                logger.warn('Membership not found in removeMemberRole', { communityId, memberId });
                 throw new GraphQLError('Membership not found', {
                     extensions: { code: 'MEMBERSHIP_NOT_FOUND' }
                 });
             }
 
+            if(membership.userId === userId){
+                logger.warn('Attempt to self-removed role in removeMemberRole', { communityId, userId });
+                throw new GraphQLError('You cannot remove role yourself', {
+                  extensions: { code: 'CANNOT_REMOVE_SELF' }
+                });
+              }
+
             // 4. Only allow removal for APPROVED members
             if (membership.status !== 'APPROVED') {
-                logger.warn('Member not approved in removeMemberRole', { communityId, userId, status: membership.status });
+                logger.warn('Member not approved in removeMemberRole', { communityId, memberId, status: membership.status });
                 if (membership.status === 'BANNED') {
                     throw new GraphQLError('Cannot remove role from a banned member', {
                         extensions: { code: 'MEMBER_BANNED' }
@@ -2395,7 +2467,7 @@ const communityService = {
                     transaction
                 });
                 if (otherOwners === 0) {
-                    logger.warn('Attempt to remove only owner in removeMemberRole', { communityId, userId });
+                    logger.warn('Attempt to remove only owner in removeMemberRole', { communityId, memberId });
                     throw new GraphQLError('Cannot remove OWNER role from the only owner of the community', {
                         extensions: { code: 'CANNOT_REMOVE_ONLY_OWNER' }
                     });
@@ -2404,7 +2476,7 @@ const communityService = {
 
             // 6. If already MEMBER, throw error
             if (membership.role === 'MEMBER') {
-                logger.warn('User is already a MEMBER in removeMemberRole', { communityId, userId });
+                logger.warn('User is already a MEMBER in removeMemberRole', { communityId, memberId });
                 throw new GraphQLError('User is already a MEMBER and cannot have the MEMBER role removed', {
                     extensions: { code: 'ALREADY_MEMBER_ROLE' }
                 });
@@ -2423,7 +2495,7 @@ const communityService = {
             }
 
             await transaction.commit();
-            logger.info('Role removed successfully in removeMemberRole', { communityId, userId });
+            logger.info('Role removed successfully in removeMemberRole', { communityId, memberId });
             return {
                 success: true,
                 message: `Role removed successfully. User is now a MEMBER.`
@@ -2431,9 +2503,9 @@ const communityService = {
         } catch (error) {
             if (transaction && !transaction.finished) {
                 await transaction.rollback();
-                logger.warn('removeMemberRole transaction rolled back', { communityId, userId });
+                logger.warn('removeMemberRole transaction rolled back', { communityId, memberId });
             }
-            logger.error('Error in removeMemberRole', { error, communityId, userId });
+            logger.error('Error in removeMemberRole', { error, communityId, memberId });
             if (error instanceof GraphQLError) throw error;
             if (error.name === 'SequelizeUniqueConstraintError') {
                 throw new GraphQLError('Could not remove role due to related records.', {
@@ -2451,19 +2523,19 @@ const communityService = {
         }
     },
 
-    async banMember(communityId, userId, reason) {
+    async banMember(communityId, memberId, userId, reason) {
         const transaction = await sequelize.transaction();
         try {
-            logger.info('Banning member', { communityId, userId, reason });
+            logger.info('Banning member', { communityId, memberId, reason });
             // 1. Validate input
-            if (!communityId || !userId) {
-                logger.warn('Missing communityId or userId in banMember', { communityId, userId });
-                throw new GraphQLError('Missing communityId or userId', {
+            if (!communityId || !memberId) {
+                logger.warn('Missing communityId or memberId in banMember', { communityId, memberId });
+                throw new GraphQLError('Missing communityId or memberId', {
                     extensions: { code: 'BAD_REQUEST_INPUT' }
                 });
             }
             if (typeof reason !== 'string' || reason.trim().length === 0) {
-                logger.warn('Missing or invalid reason in banMember', { communityId, userId, reason });
+                logger.warn('Missing or invalid reason in banMember', { communityId, memberId, reason });
                 throw new GraphQLError('Ban reason is required', {
                     extensions: { code: 'BAN_REASON_REQUIRED' }
                 });
@@ -2480,19 +2552,26 @@ const communityService = {
 
             // 3. Find the membership
             const membership = await CommunityMember.findOne({
-                where: { communityId, userId },
+                where: { communityId, id: memberId },
                 transaction
             });
             if (!membership) {
-                logger.warn('Membership not found in banMember', { communityId, userId });
+                logger.warn('Membership not found in banMember', { communityId, memberId });
                 throw new GraphQLError('Membership not found', {
                     extensions: { code: 'MEMBERSHIP_NOT_FOUND' }
                 });
             }
 
+            if(membership.userId === userId){
+                logger.warn('Attempt to self-ban in banMember', { communityId, memberId });
+                throw new GraphQLError('You cannot ban yourself', {
+                  extensions: { code: 'CANNOT_BAN_SELF' }
+                });
+              }
+
             // 4. Prevent banning the owner
             if (membership.role === 'OWNER') {
-                logger.warn('Attempt to ban owner in banMember', { communityId, userId });
+                logger.warn('Attempt to ban owner in banMember', { communityId, memberId });
                 throw new GraphQLError('Cannot ban the owner of the community', {
                     extensions: { code: 'CANNOT_BAN_OWNER' }
                 });
@@ -2500,13 +2579,13 @@ const communityService = {
 
             // 6. Handle already banned/rejected
             if (membership.status === 'BANNED') {
-                logger.warn('User already banned in banMember', { communityId, userId });
+                logger.warn('User already banned in banMember', { communityId, memberId });
                 throw new GraphQLError('User is already banned from this community', {
                     extensions: { code: 'ALREADY_BANNED' }
                 });
             }
             if (membership.status === 'REJECTED') {
-                logger.warn('User is rejected in banMember', { communityId, userId });
+                logger.warn('User is rejected in banMember', { communityId, memberId });
                 throw new GraphQLError('Cannot ban a rejected member', {
                     extensions: { code: 'ALREADY_REJECTED' }
                 });
@@ -2515,7 +2594,7 @@ const communityService = {
             // 7. Set status to BANNED and save reason
             membership.status = 'BANNED';
             membership.banReason = reason;
-            membership.bannedBy = communityId
+            membership.bannedBy = userId
             membership.bannedAt = new Date()
             await membership.save({ transaction });
 
@@ -2528,7 +2607,7 @@ const communityService = {
             }
 
             await transaction.commit();
-            logger.info('User banned successfully in banMember', { communityId, userId });
+            logger.info('User banned successfully in banMember', { communityId, memberId });
             return {
                 success: true,
                 message: 'User has been banned from the community.'
@@ -2536,9 +2615,9 @@ const communityService = {
         } catch (error) {
             if (transaction && !transaction.finished) {
                 await transaction.rollback();
-                logger.warn('banMember transaction rolled back', { communityId, userId });
+                logger.warn('banMember transaction rolled back', { communityId, memberId });
             }
-            logger.error('Error in banMember', { error, communityId, userId });
+            logger.error('Error in banMember', { error, communityId, memberId });
             if (error instanceof GraphQLError) throw error;
             if (error.name === 'SequelizeUniqueConstraintError') {
                 throw new GraphQLError('Could not ban member due to related records.', {
@@ -2556,14 +2635,14 @@ const communityService = {
         }
     },
 
-    async unbanMember(communityId, userId) {
+    async unbanMember(communityId, memberId , userId) {
         const transaction = await sequelize.transaction();
         try {
-            logger.info('Unbanning member', { communityId, userId });
+            logger.info('Unbanning member', { communityId, memberId });
             // 1. Validate input
-            if (!communityId || !userId) {
-                logger.warn('Missing communityId or userId in unbanMember', { communityId, userId });
-                throw new GraphQLError('Missing communityId or userId', {
+            if (!communityId || !memberId) {
+                logger.warn('Missing communityId or memberId in unbanMember', { communityId, memberId });
+                throw new GraphQLError('Missing communityId or memberId', {
                     extensions: { code: 'BAD_REQUEST_INPUT' }
                 });
             }
@@ -2579,19 +2658,26 @@ const communityService = {
 
             // 3. Find the membership
             const membership = await CommunityMember.findOne({
-                where: { communityId, userId },
+                where: { communityId, id: memberId },
                 transaction
             });
             if (!membership) {
-                logger.warn('Membership not found in unbanMember', { communityId, userId });
+                logger.warn('Membership not found in unbanMember', { communityId, memberId });
                 throw new GraphQLError('Membership not found', {
                     extensions: { code: 'MEMBERSHIP_NOT_FOUND' }
                 });
             }
 
+            if(membership.userId === userId){
+                logger.warn('Attempt to self-unban in unbanMember', { communityId, m });
+                throw new GraphQLError('You cannot unban yourself', {
+                  extensions: { code: 'CANNOT_BAN_SELF' }
+                });
+              }
+
             // 4. Only allow unbanning for BANNED members
             if (membership.status !== 'BANNED') {
-                logger.warn('User is not currently banned in unbanMember', { communityId, userId, status: membership.status });
+                logger.warn('User is not currently banned in unbanMember', { communityId, memberId, status: membership.status });
                 if (membership.status === 'REJECTED') {
                     throw new GraphQLError('User is already rejected and not banned', {
                         extensions: { code: 'ALREADY_REJECTED' }
@@ -2609,7 +2695,7 @@ const communityService = {
 
             // 5. Prevent unbanning the owner (should not be possible, but for safety)
             if (membership.role === 'OWNER') {
-                logger.warn('Attempt to unban owner in unbanMember', { communityId, userId });
+                logger.warn('Attempt to unban owner in unbanMember', { communityId, memberId });
                 throw new GraphQLError('Cannot unban the owner of the community', {
                     extensions: { code: 'CANNOT_UNBAN_OWNER' }
                 });
@@ -2632,7 +2718,7 @@ const communityService = {
             }
 
             await transaction.commit();
-            logger.info('User unbanned successfully in unbanMember', { communityId, userId });
+            logger.info('User unbanned successfully in unbanMember', { communityId, memberId });
             return {
                 success: true,
                 message: 'User has been unbanned from the community.'
@@ -2640,9 +2726,9 @@ const communityService = {
         } catch (error) {
             if (transaction && !transaction.finished) {
                 await transaction.rollback();
-                logger.warn('unbanMember transaction rolled back', { communityId, userId });
+                logger.warn('unbanMember transaction rolled back', { communityId, memberId });
             }
-            logger.error('Error in unbanMember', { error, communityId, userId });
+            logger.error('Error in unbanMember', { error, communityId, memberId });
             if (error instanceof GraphQLError) throw error;
             if (error.name === 'SequelizeUniqueConstraintError') {
                 throw new GraphQLError('Could not unban member due to related records.', {
@@ -2720,6 +2806,7 @@ const communityService = {
                 include: [{
                     model: Community,
                     as: 'community',
+                    where: { ownerId: { [Op.ne]: userId } }, // Exclude owned communities
                     include: [
                         { 
                             model: User, 
@@ -2753,15 +2840,6 @@ const communityService = {
             const sliced = memberships.slice(0, limit);
       
             const edges = sliced.map(membership => {
-                // Remove computed fields if present
-                if (membership.community) {
-                    delete membership.community.canCreateEvents;
-                    delete membership.community.isOwner;
-                    delete membership.community.isAdmin;
-                    delete membership.community.isModerator;
-                    delete membership.community.canPost;
-                    delete membership.community.membershipStatus;
-                }
                 return {
                     node: membership.community,
                     cursor: Buffer.from(membership.joinedAt.toISOString()).toString('base64')
@@ -2964,23 +3042,6 @@ const communityService = {
                 throw new GraphQLError('Community not found', {
                     extensions: { code: 'COMMUNITY_NOT_FOUND', field: 'communityId' }
                 });
-            }
-
-            // 4. If userId is provided, compute permissions and membership status
-            if (userId) {            
-                community.isOwner = community.ownerId === userId;
-                community.isAdmin = await this.isAdmin(community.id, userId, transaction);
-                community.isModerator = await this.isModerator(community.id, userId, transaction);
-                community.canCreateEvents = await this.canCreateEvents(community.id, userId, transaction);
-                community.canPost = await this.canPost(community.id, userId, transaction);
-                community.membershipStatus = await this.getMembershipStatus(community.id, userId, transaction);
-            } else {
-                community.isOwner = false;
-                community.isAdmin = false;
-                community.isModerator = false;
-                community.canCreateEvents = false;
-                community.canPost = false;
-                community.membershipStatus = 'NOT_MEMBER';
             }
             
             await transaction.commit();

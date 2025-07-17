@@ -111,11 +111,11 @@ module.exports = (sequelize, Sequelize) => {
         },
         communityUpdatesEnabled: {
           type: Sequelize.BOOLEAN,
-          defaultValue: true,
+          defaultValue: false,
         },
         eventRemindersEnabled: {
           type: Sequelize.BOOLEAN,
-          defaultValue: true,
+          defaultValue: false,
         },
         lastActiveAt: {
           type: Sequelize.DATE,

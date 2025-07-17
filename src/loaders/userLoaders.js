@@ -18,7 +18,7 @@ const createUserLoaders = () => {
     // User DataLoader
     const userLoader = new DataLoader(async (userIds) => {
         try {
-            performanceMonitor.startTimer('userLoader');
+            // performanceMonitor.startTimer('userLoader');
             
             const users = await User.findAll({
                 where: { id: { [Op.in]: userIds } },
@@ -30,7 +30,7 @@ const createUserLoaders = () => {
 
             const result = userIds.map(id => userMap.get(id) || null);
             
-            performanceMonitor.endTimer('userLoader', { batchSize: userIds.length, foundCount: users.length });
+            // performanceMonitor.endTimer('userLoader', { batchSize: userIds.length, foundCount: users.length });
             return result;
         } catch (error) {
             logger.error('Error in userLoader', { error, userIds });
@@ -41,7 +41,7 @@ const createUserLoaders = () => {
     // User by Email DataLoader
     const userByEmailLoader = new DataLoader(async (emails) => {
         try {
-            performanceMonitor.startTimer('userByEmailLoader');
+            // performanceMonitor.startTimer('userByEmailLoader');
             
             const users = await User.findAll({
                 where: { email: { [Op.in]: emails } },
@@ -53,7 +53,7 @@ const createUserLoaders = () => {
 
             const result = emails.map(email => userMap.get(email) || null);
             
-            performanceMonitor.endTimer('userByEmailLoader', { batchSize: emails.length, foundCount: users.length });
+            // performanceMonitor.endTimer('userByEmailLoader', { batchSize: emails.length, foundCount: users.length });
             return result;
         } catch (error) {
             logger.error('Error in userByEmailLoader', { error, emails });
@@ -64,7 +64,7 @@ const createUserLoaders = () => {
     // User Interests DataLoader
     const userInterestsLoader = new DataLoader(async (userIds) => {
         try {
-            performanceMonitor.startTimer('userInterestsLoader');
+            // performanceMonitor.startTimer('userInterestsLoader');
             
             const userInterests = await User.findAll({
                 where: { id: { [Op.in]: userIds } },
@@ -82,7 +82,7 @@ const createUserLoaders = () => {
                 return user ? user.interests : [];
             });
             
-            performanceMonitor.endTimer('userInterestsLoader', { batchSize: userIds.length });
+            // performanceMonitor.endTimer('userInterestsLoader', { batchSize: userIds.length });
             return result;
         } catch (error) {
             logger.error('Error in userInterestsLoader', { error, userIds });
@@ -93,7 +93,7 @@ const createUserLoaders = () => {
     // User Communities DataLoader
     const userCommunitiesLoader = new DataLoader(async (userIds) => {
         try {
-            performanceMonitor.startTimer('userCommunitiesLoader');
+            // performanceMonitor.startTimer('userCommunitiesLoader');
             
             const userCommunities = await CommunityMember.findAll({
                 where: { userId: { [Op.in]: userIds } },
@@ -116,7 +116,7 @@ const createUserLoaders = () => {
                     .map(membership => membership.community);
             });
             
-            performanceMonitor.endTimer('userCommunitiesLoader', { batchSize: userIds.length });
+            // performanceMonitor.endTimer('userCommunitiesLoader', { batchSize: userIds.length });
             return result;
         } catch (error) {
             logger.error('Error in userCommunitiesLoader', { error, userIds });
@@ -127,7 +127,7 @@ const createUserLoaders = () => {
     // User Owned Communities DataLoader
     const userOwnedCommunitiesLoader = new DataLoader(async (userIds) => {
         try {
-            performanceMonitor.startTimer('userOwnedCommunitiesLoader');
+            // performanceMonitor.startTimer('userOwnedCommunitiesLoader');
             
             const ownedCommunities = await Community.findAll({
                 where: { ownerId: { [Op.in]: userIds } },
@@ -143,7 +143,7 @@ const createUserLoaders = () => {
                 return ownedCommunities.filter(community => community.ownerId === userId);
             });
             
-            performanceMonitor.endTimer('userOwnedCommunitiesLoader', { batchSize: userIds.length });
+            // performanceMonitor.endTimer('userOwnedCommunitiesLoader', { batchSize: userIds.length });
             return result;
         } catch (error) {
             logger.error('Error in userOwnedCommunitiesLoader', { error, userIds });
@@ -154,7 +154,7 @@ const createUserLoaders = () => {
     // Community Members DataLoader
     const communityMembersLoader = new DataLoader(async (communityIds) => {
         try {
-            performanceMonitor.startTimer('communityMembersLoader');
+            // performanceMonitor.startTimer('communityMembersLoader');
             
             const members = await CommunityMember.findAll({
                 where: { communityId: { [Op.in]: communityIds } },
@@ -170,7 +170,7 @@ const createUserLoaders = () => {
                 return members.filter(member => member.communityId === communityId);
             });
             
-            performanceMonitor.endTimer('communityMembersLoader', { batchSize: communityIds.length });
+            // performanceMonitor.endTimer('communityMembersLoader', { batchSize: communityIds.length });
             return result;
         } catch (error) {
             logger.error('Error in communityMembersLoader', { error, communityIds });
@@ -181,7 +181,7 @@ const createUserLoaders = () => {
     // Community Member Count DataLoader
     const communityMemberCountLoader = new DataLoader(async (communityIds) => {
         try {
-            performanceMonitor.startTimer('communityMemberCountLoader');
+            // performanceMonitor.startTimer('communityMemberCountLoader');
             
             const memberCounts = await CommunityMember.findAll({
                 where: { 
@@ -203,7 +203,7 @@ const createUserLoaders = () => {
 
             const result = communityIds.map(communityId => countMap.get(communityId) || 0);
             
-            performanceMonitor.endTimer('communityMemberCountLoader', { batchSize: communityIds.length });
+            // performanceMonitor.endTimer('communityMemberCountLoader', { batchSize: communityIds.length });
             return result;
         } catch (error) {
             logger.error('Error in communityMemberCountLoader', { error, communityIds });
@@ -214,7 +214,7 @@ const createUserLoaders = () => {
     // Community Owner DataLoader
     const communityOwnerLoader = new DataLoader(async (communityIds) => {
         try {
-            performanceMonitor.startTimer('communityOwnerLoader');
+            // performanceMonitor.startTimer('communityOwnerLoader');
             
             const communities = await Community.findAll({
                 where: { id: { [Op.in]: communityIds } },
@@ -231,7 +231,7 @@ const createUserLoaders = () => {
                 return community ? community.owner : null;
             });
             
-            performanceMonitor.endTimer('communityOwnerLoader', { batchSize: communityIds.length });
+            // performanceMonitor.endTimer('communityOwnerLoader', { batchSize: communityIds.length });
             return result;
         } catch (error) {
             logger.error('Error in communityOwnerLoader', { error, communityIds });
@@ -242,7 +242,7 @@ const createUserLoaders = () => {
     // Community Interests DataLoader
     const communityInterestsLoader = new DataLoader(async (communityIds) => {
         try {
-            performanceMonitor.startTimer('communityInterestsLoader');
+            // performanceMonitor.startTimer('communityInterestsLoader');
             
             const communities = await Community.findAll({
                 where: { id: { [Op.in]: communityIds } },
@@ -260,7 +260,7 @@ const createUserLoaders = () => {
                 return community ? community.interests : [];
             });
             
-            performanceMonitor.endTimer('communityInterestsLoader', { batchSize: communityIds.length });
+            // performanceMonitor.endTimer('communityInterestsLoader', { batchSize: communityIds.length });
             return result;
         } catch (error) {
             logger.error('Error in communityInterestsLoader', { error, communityIds });
@@ -271,7 +271,7 @@ const createUserLoaders = () => {
     // Post Likes DataLoader
     const postLikesLoader = new DataLoader(async (postIds) => {
         try {
-            performanceMonitor.startTimer('postLikesLoader');
+            // performanceMonitor.startTimer('postLikesLoader');
             
             const likes = await PostLike.findAll({
                 where: { postId: { [Op.in]: postIds } },
@@ -286,7 +286,7 @@ const createUserLoaders = () => {
                 return likes.filter(like => like.postId === postId);
             });
             
-            performanceMonitor.endTimer('postLikesLoader', { batchSize: postIds.length });
+            // performanceMonitor.endTimer('postLikesLoader', { batchSize: postIds.length });
             return result;
         } catch (error) {
             logger.error('Error in postLikesLoader', { error, postIds });
@@ -297,7 +297,7 @@ const createUserLoaders = () => {
     // Post Like Count DataLoader
     const postLikeCountLoader = new DataLoader(async (postIds) => {
         try {
-            performanceMonitor.startTimer('postLikeCountLoader');
+            // performanceMonitor.startTimer('postLikeCountLoader');
             
             const likeCounts = await PostLike.findAll({
                 where: { postId: { [Op.in]: postIds } },
@@ -316,7 +316,7 @@ const createUserLoaders = () => {
 
             const result = postIds.map(postId => countMap.get(postId) || 0);
             
-            performanceMonitor.endTimer('postLikeCountLoader', { batchSize: postIds.length });
+            // performanceMonitor.endTimer('postLikeCountLoader', { batchSize: postIds.length });
             return result;
         } catch (error) {
             logger.error('Error in postLikeCountLoader', { error, postIds });
@@ -327,7 +327,7 @@ const createUserLoaders = () => {
     // Post Bookmarks DataLoader
     const postBookmarksLoader = new DataLoader(async (postIds) => {
         try {
-            performanceMonitor.startTimer('postBookmarksLoader');
+            // performanceMonitor.startTimer('postBookmarksLoader');
             
             const bookmarks = await PostBookmark.findAll({
                 where: { postId: { [Op.in]: postIds } },
@@ -342,7 +342,7 @@ const createUserLoaders = () => {
                 return bookmarks.filter(bookmark => bookmark.postId === postId);
             });
             
-            performanceMonitor.endTimer('postBookmarksLoader', { batchSize: postIds.length });
+            // performanceMonitor.endTimer('postBookmarksLoader', { batchSize: postIds.length });
             return result;
         } catch (error) {
             logger.error('Error in postBookmarksLoader', { error, postIds });
@@ -353,7 +353,7 @@ const createUserLoaders = () => {
     // Event Registrations DataLoader
     const eventRegistrationsLoader = new DataLoader(async (postIds) => {
         try {
-            performanceMonitor.startTimer('eventRegistrationsLoader');
+            // performanceMonitor.startTimer('eventRegistrationsLoader');
             
             const registrations = await EventRegistration.findAll({
                 where: { postId: { [Op.in]: postIds } },
@@ -368,7 +368,7 @@ const createUserLoaders = () => {
                 return registrations.filter(registration => registration.postId === postId);
             });
             
-            performanceMonitor.endTimer('eventRegistrationsLoader', { batchSize: postIds.length });
+            // performanceMonitor.endTimer('eventRegistrationsLoader', { batchSize: postIds.length });
             return result;
         } catch (error) {
             logger.error('Error in eventRegistrationsLoader', { error, postIds });
@@ -379,7 +379,7 @@ const createUserLoaders = () => {
     // User Membership Status DataLoader
     const userMembershipStatusLoader = new DataLoader(async (keys) => {
         try {
-            performanceMonitor.startTimer('userMembershipStatusLoader');
+            // performanceMonitor.startTimer('userMembershipStatusLoader');
             
             const [communityIds, userIds] = keys.reduce((acc, key) => {
                 acc[0].push(key.communityId);
@@ -401,8 +401,10 @@ const createUserLoaders = () => {
                 );
                 return membership ? membership.status : 'NOT_MEMBER';
             });
+
+            console.log("UserMember" , result)
             
-            performanceMonitor.endTimer('userMembershipStatusLoader', { batchSize: keys.length });
+            // performanceMonitor.endTimer('userMembershipStatusLoader', { batchSize: keys.length });
             return result;
         } catch (error) {
             logger.error('Error in userMembershipStatusLoader', { error, keys });

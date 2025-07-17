@@ -20,4 +20,5 @@ module.exports = {
     ...communityPostResolvers.Mutation
   },
   User: userResolvers.User,
+  Community: communityResolvers.Community,
 }; 

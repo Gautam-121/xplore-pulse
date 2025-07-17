@@ -11,7 +11,7 @@
     coverImageUrl: String          # Community cover/banner image
     isPrivate: Boolean!            # True = only approved members can join
     isPaid: Boolean!               # True = user must pay to join
-    price: Float                   # Required if isPaid is true
+    price: String                   # Required if isPaid is true
     currency: Currency               # Currency for paid communities (e.g., USD)
     memberCount: Int!              # Total number of members
     postCount: Int!                # Number of posts in the community
@@ -337,13 +337,13 @@ type Mutation {
   joinCommunity(communityId: UUID!): GenericResponse!
   leaveCommunity(communityId: UUID!): GenericResponse!
 
-  approveMemberRequest(communityId: UUID!, userId: UUID!): GenericResponse!
-  rejectMemberRequest(communityId: UUID!, userId: UUID!): GenericResponse!
+  approveMemberRequest(communityId: UUID!, memberId: UUID!): GenericResponse!
+  rejectMemberRequest(communityId: UUID!, memberId: UUID!): GenericResponse!
 
-  assignMemberRole(communityId: UUID!, userId: UUID!, role: MemberRole!): GenericResponse!
-  removeMemberRole(communityId: UUID!, userId: UUID!): GenericResponse!
+  assignMemberRole(communityId: UUID!, memberId: UUID!, role: MemberRole!): GenericResponse!
+  removeMemberRole(communityId: UUID!, memberId: UUID!): GenericResponse!
 
-  banMember(communityId: UUID!, userId: UUID!, reason: String): GenericResponse!
-  unbanMember(communityId: UUID!, userId: UUID!): GenericResponse!
+  banMember(communityId: UUID!, memberId: UUID!, reason: String): GenericResponse!
+  unbanMember(communityId: UUID!, memberId: UUID!): GenericResponse!
   
 }

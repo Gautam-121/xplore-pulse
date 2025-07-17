@@ -291,9 +291,7 @@ class AuthService {
         );
         logger.info("New user created via Kaleyra OTP", { userId: user.id });
       } else {
-        logger.info("Existing user logged in via Kaleyra OTP", {
-          userId: user.id,
-        });
+        logger.info("Existing user logged in via Kaleyra OTP", {userId: user.id });
       }
 
       // Generate tokens
@@ -507,7 +505,7 @@ class AuthService {
         });
       }
   
-      const { sub: googleId, email, name } = payload;
+      const { sub: googleId, email, name , picture } = payload;
   
       let user = await this.User.findOne({ where: { googleId }, transaction });
       let isNewUser = false;
@@ -523,65 +521,23 @@ class AuthService {
         user = await this.User.create({
           googleId,
           email,
+          profileImageUrl: picture,
           name: name || email,
           isEmailVerified: true,
-          onboardingStep: "PHONE_VERIFICATION",
-          isProfileComplete: false,
+          onboardingStep: "INTERESTS_SELECTION",
+          isProfileComplete: true,
           isActive: true,
         }, { transaction });
   
         isNewUser = true;
-  
         logger.info("New user created via Google", { userId: user.id });
-  
-        const phoneVerificationToken = jwt.sign(
-          { userId: user.id, type: "phone_verification" },
-          process.env.ACCESS_TOKEN_SECRET,
-          { expiresIn: "15m" }
-        );
-  
-        await transaction.commit();
-  
-        return {
-          success: true,
-          user,
-          isNewUser,
-          onboardingStep: user.onboardingStep,
-          authTokens: null,
-          phoneVerificationToken,
-          message: "Phone verification required. Please verify your phone number to continue.",
-        };
-      }
-  
-      // Case 2: Existing user, missing googleId
-      if (!user.googleId) {
+      }else{
+        logger.info("User already exist, Update lats login Time", { userId: user.id });
+        // Update last Login of user
         await user.update({ googleId }, { transaction });
       }
   
-      // Case 3: Phone not verified
-      if (!user.isPhoneVerified || !user.phoneNumber) {
-        logger.info("Phone verification required", { userId: user.id });
-  
-        const phoneVerificationToken = jwt.sign(
-          { userId: user.id, type: "phone_verification" },
-          process.env.ACCESS_TOKEN_SECRET,
-          { expiresIn: "15m" }
-        );
-  
-        await transaction.commit();
-  
-        return {
-          success: true,
-          user,
-          isNewUser: false,
-          onboardingStep: "PHONE_VERIFICATION",
-          authTokens: null,
-          phoneVerificationToken,
-          message: "Phone verification required. Please verify your phone number to continue.",
-        };
-      }
-  
-      // Case 4: Valid Google login
+      // Case 2: Valid Google login
       const { accessToken, refreshToken, expiresAt } = await this.generateTokens(
         user.id,
         deviceInfo,
@@ -604,7 +560,6 @@ class AuthService {
         isNewUser,
         onboardingStep: user.onboardingStep,
         authTokens: { accessToken, refreshToken, expiresAt },
-        phoneVerificationToken: null,
         message: isNewUser ? "Account created via Google" : "Login successful",
       };
     } catch (error) {

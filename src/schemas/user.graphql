@@ -5,8 +5,8 @@
 # Represents the authenticated user of the application
 type User {
   id: UUID!
-  phoneNumber: String!                     # User's registered phone number
-  countryCode: String!                     # Country code for the phone number (e.g., +91)
+  phoneNumber: String                      # User's registered phone number
+  countryCode: String                     # Country code for the phone number (e.g., +91)
   name: String                             # Full name of the user
   email: String                            # Email address (optional)
   bio: String                              # Short bio/about section
@@ -20,7 +20,6 @@ type User {
   notificationSettings: NotificationSettings! # User's notification preferences
   createdAt: DateTime!                     # Account creation timestamp
   updatedAt: DateTime!                     # Last profile update timestamp
-  lastActiveAt: DateTime!                  # Last time the user was active
   authTokens: AuthTokens                   # Optional: returned only on login/mutation
   # location: Location
 }

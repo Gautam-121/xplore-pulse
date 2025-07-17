@@ -248,7 +248,16 @@ class UserService {
                     extensions: { code: "ONBOARDING_INCOMPLETE" },
                 });
             }
-            if (user.email?.toLowerCase() === email.toLowerCase()) {
+
+            if (user.isEmailVerified) {
+                throw new GraphQLError(
+                    "Email is already verified and cannot be updated again.", {
+                        extensions: { code: "EMAIL_ALREADY_VERIFIED" }
+                    }
+                );
+            }
+
+            if (user.email?.toLowerCase() === email.toLowerCase() && user.isEmailVerified) {
                 throw new GraphQLError("New email must be different from current", {
                     extensions: { code: "EMAIL_SAME_AS_CURRENT" },
                 });
@@ -374,6 +383,14 @@ class UserService {
                 throw new GraphQLError("Please complete onboarding before updating phone", {
                     extensions: { code: "ONBOARDING_NOT_COMPLETED" },
                 });
+            }
+
+            if (existingUser.isPhoneVerified) {
+                throw new GraphQLError(
+                    "Phone is already verified and cannot be updated again.", {
+                        extensions: { code: "PHONE_ALREADY_VERIFIED" }
+                    }
+                );
             }
 
             const phoneInUse = await this.UserModel.findOne({
@@ -547,6 +564,14 @@ class UserService {
                 )
             }
 
+            if(userRecord.email && !userRecord.isEmailVerified && userRecord.onboardingStep === "PROFILE_SETUP"){
+                throw new GraphQLError(
+                    "Please verify your email before moving next step",{
+                        extensions: { code: "EMAIL_NOT_VERIFIED"}
+                    }
+                )
+            }
+
             // Sanity check (UUIDs already validated in resolver)
             const interests = await this.InterestModel.findAll({
                 where: { id: interestIds, isActive: true },
@@ -616,7 +641,7 @@ class UserService {
             });
 
             await updatedUser.update(
-                { onboardingStep: "COMMUNITY_RECOMMENDATIONS" },
+                { onboardingStep: "COMPLETED" },
                 { transaction }
             );
             await transaction.commit();
@@ -624,7 +649,6 @@ class UserService {
             return {
                 success: true,
                 user: updatedUser,
-                recommendedCommunities: [], // TODO: Logic placeholder
                 message: "Interests selected successfully",
             };
         } catch (error) {

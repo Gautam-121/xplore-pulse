@@ -69,20 +69,6 @@ const resolvers = {
         if (result.edges.length > 0) {
           console.log('First community node:', result.edges[0].node);
         }
-        // Deep clone and force delete computed fields from all nodes
-        const deepClone = obj => JSON.parse(JSON.stringify(obj));
-        result.edges.forEach(edge => {
-          if (edge.node) {
-            const clone = deepClone(edge.node);
-            delete clone.isAdmin;
-            delete clone.isOwner;
-            delete clone.isModerator;
-            delete clone.canCreateEvents;
-            delete clone.canPost;
-            delete clone.membershipStatus;
-            edge.node = clone;
-          }
-        });
         return result;
       }),
   
@@ -119,7 +105,8 @@ const resolvers = {
           first,
           after,
           role,
-          status
+          status,
+          user.id
         );
       }),
   
@@ -230,12 +217,6 @@ const resolvers = {
           if (input.description !== undefined) {
             input.description = ValidationService.sanitizeBio(input.description);
             ValidationService.validateBio(input.description, "description");
-          }
-          if (input.price !== undefined) {
-            ValidationService.validatePrice(input.price);
-          }
-          if (input.currency !== undefined) {
-            ValidationService.validateCurrency(input.currency);
           }
           if (input.interests !== undefined) {
             ValidationService.validateArrayOfUUIDs(input.interests, "interests");
@@ -368,22 +349,15 @@ const resolvers = {
   
       approveMemberRequest: requireAuth(async (parent, args, context) => {
         const { user } = context;
-        const { communityId, userId } = args;
+        const { communityId, memberId } = args;
         try {
           // Check if user is owner/admin
           const sanitizeCommunityId = ValidationService.sanitizeUUID(communityId);
-          const sanitizeUserId = ValidationService.sanitizeUUID(userId);
+          const sanitizeMemberId = ValidationService.sanitizeUUID(memberId);
           ValidationService.validateUUID(sanitizeCommunityId, "communityId");
-          ValidationService.validateUUID(sanitizeUserId, "userId");
-          if(userId === user.id){
-            logger.warn('Attempt to self-approved in approveMember', { communityId, userId });
-            throw new GraphQLError('You cannot approved yourself', {
-              extensions: { code: 'CANNOT_BAN_SELF' }
-            });
-          }
-
+          ValidationService.validateUUID(sanitizeMemberId, "memberId");
           await communityService.checkAdminAccess(sanitizeCommunityId, user.id);
-          return await communityService.approveMemberRequest(sanitizeCommunityId, sanitizeUserId);
+          return await communityService.approveMemberRequest(sanitizeCommunityId, sanitizeMemberId , user.id);
         } catch (error) {
           logger.error('Approve member request error:', { error });
           if (error.name === 'SequelizeUniqueConstraintError') {
@@ -405,22 +379,15 @@ const resolvers = {
   
       rejectMemberRequest: requireAuth(async (parent, args, context) => {
         const { user } = context;
-        const { communityId, userId } = args;
+        const { communityId, memberId } = args;
         try {
           // Check if user is owner/admin
           const sanitizeCommunityId = ValidationService.sanitizeUUID(communityId);
-          const sanitizeUserId = ValidationService.sanitizeUUID(userId);
+          const sanitizeMemberId = ValidationService.sanitizeUUID(memberId);
           ValidationService.validateUUID(sanitizeCommunityId, "communityId");
-          ValidationService.validateUUID(sanitizeUserId, "userId");
-          if(userId === user.id){
-            logger.warn('Attempt to self-reject in rejectMember', { communityId, userId });
-            throw new GraphQLError('You cannot reject yourself', {
-              extensions: { code: 'CANNOT_BAN_SELF' }
-            });
-          }
-
+          ValidationService.validateUUID(sanitizeMemberId, "memberId");
           await communityService.checkAdminAccess(sanitizeCommunityId, user.id);
-          return await communityService.rejectMemberRequest(sanitizeCommunityId, sanitizeUserId);
+          return await communityService.rejectMemberRequest(sanitizeCommunityId, sanitizeMemberId, user.id);
         } catch (error) {
           logger.error('Reject member request error:', { error });
           if (error.name === 'SequelizeUniqueConstraintError') {
@@ -442,21 +409,14 @@ const resolvers = {
   
       assignMemberRole: requireAuth(async (parent, args, context) => {
         const { user } = context;
-        const { communityId, userId, role } = args;
+        const { communityId, memberId, role } = args;
         try {
           const sanitizeCommunityId = ValidationService.sanitizeUUID(communityId);
-          const sanitizeUserId = ValidationService.sanitizeUUID(userId);
+          const sanitizeMemberId = ValidationService.sanitizeUUID(memberId);
           ValidationService.validateUUID(sanitizeCommunityId, "communityId");
-          ValidationService.validateUUID(sanitizeUserId, "userId");
-          if(userId === user.id){
-            logger.warn('Attempt to self-assign-role in assignMemberRole', { communityId, userId });
-            throw new GraphQLError('You cannot assign role yourself', {
-              extensions: { code: 'CANNOT_BAN_SELF' }
-            });
-          }
-
+          ValidationService.validateUUID(sanitizeMemberId, "memberId");
           await communityService.checkOwnerAccess(sanitizeCommunityId, user.id);
-          return await communityService.assignMemberRole(sanitizeCommunityId, sanitizeUserId, role);
+          return await communityService.assignMemberRole(sanitizeCommunityId, sanitizeMemberId, user.id, role);
         } catch (error) {
           logger.error('Assign member role error:', { error });
           if (error.name === 'SequelizeUniqueConstraintError') {
@@ -478,22 +438,15 @@ const resolvers = {
   
       removeMemberRole: requireAuth(async (parent, args, context) => {
         const { user } = context;
-        const { communityId, userId } = args;
+        const { communityId, memberId } = args;
         try {
           const sanitizeCommunityId = ValidationService.sanitizeUUID(communityId);
-          const sanitizeUserId = ValidationService.sanitizeUUID(userId);
+          const sanitizeMemberId = ValidationService.sanitizeUUID(memberId);
           ValidationService.validateUUID(sanitizeCommunityId, "communityId");
-          ValidationService.validateUUID(sanitizeUserId, "userId");
-          if(userId === user.id){
-            logger.warn('Attempt to self-removed role in removeMemberRole', { communityId, userId });
-            throw new GraphQLError('You cannot remove role yourself', {
-              extensions: { code: 'CANNOT_BAN_SELF' }
-            });
-          }
-
+          ValidationService.validateUUID(sanitizeMemberId, "memberId");
           // Check if user is owner (only owners can remove roles)
           await communityService.checkOwnerAccess(sanitizeCommunityId, user.id);
-          return await communityService.removeMemberRole(sanitizeCommunityId, sanitizeUserId);
+          return await communityService.removeMemberRole(sanitizeCommunityId, sanitizeMemberId , user.id);
         } catch (error) {
           logger.error('Remove member role error:', { error });
           if (error.name === 'SequelizeUniqueConstraintError') {
@@ -515,22 +468,15 @@ const resolvers = {
   
       banMember: requireAuth(async (parent, args, context) => {
         const { user } = context;
-        const { communityId, userId, reason } = args;
+        const { communityId, memberId, reason } = args;
         try {
           const sanitizeCommunityId = ValidationService.sanitizeUUID(communityId);
-          const sanitizeUserId = ValidationService.sanitizeUUID(userId);
+          const sanitizeMemberId = ValidationService.sanitizeUUID(memberId);
           ValidationService.validateUUID(sanitizeCommunityId, "communityId");
-          ValidationService.validateUUID(sanitizeUserId, "userId");
-          if(userId === user.id){
-            logger.warn('Attempt to self-ban in banMember', { communityId, userId });
-            throw new GraphQLError('You cannot ban yourself', {
-              extensions: { code: 'CANNOT_BAN_SELF' }
-            });
-          }
-  
+          ValidationService.validateUUID(sanitizeMemberId, "memberId");  
           // Check if user is owner (only owners can ban members)
           await communityService.checkOwnerAccess(sanitizeCommunityId, user.id);
-          return await communityService.banMember(sanitizeCommunityId, sanitizeUserId, reason);
+          return await communityService.banMember(sanitizeCommunityId, sanitizeMemberId, user.id , reason);
         } catch (error) {
           logger.error('Ban member role error:', { error });
           if (error.name === 'SequelizeUniqueConstraintError') {
@@ -552,23 +498,17 @@ const resolvers = {
   
       unbanMember: requireAuth(async (parent, args, context) => {
         const { user } = context;
-        const { communityId, userId } = args;
+        const { communityId, memberId } = args;
         try {
           const sanitizeCommunityId = ValidationService.sanitizeUUID(communityId);
-            const sanitizeUserId = ValidationService.sanitizeUUID(userId);
+            const sanitizeMemberId = ValidationService.sanitizeUUID(memberId);
             ValidationService.validateUUID(sanitizeCommunityId, "communityId");
-            ValidationService.validateUUID(sanitizeUserId, "userId");
-            if(userId === user.id){
-              logger.warn('Attempt to self-unban in unbanMember', { communityId, userId });
-              throw new GraphQLError('You cannot unban yourself', {
-                extensions: { code: 'CANNOT_BAN_SELF' }
-              });
-            }
+            ValidationService.validateUUID(sanitizeMemberId, "memberId");
           // Check if user is owner (only owners can unban members)
           await communityService.checkOwnerAccess(sanitizeCommunityId, user.id);
-          return await communityService.unbanMember(sanitizeUserId, userId);
+          return await communityService.unbanMember(sanitizeCommunityId , sanitizeMemberId, user.id);
         } catch (error) {
-          logger.error('Unbam member role error:', { error });
+          logger.error('Unban member role error:', { error });
           if (error.name === 'SequelizeUniqueConstraintError') {
             throw new GraphQLError('Could not unban member due to related records.', {
               extensions: { code: 'ASSIGN_ROLE_CONSTRAINT' }
@@ -600,8 +540,8 @@ const resolvers = {
             userId: user.id,
             communityId: parent.id
           });
-          
-          return status;
+          console.log("MemberShipStatus" , status)
+          return status === "APPROVED" ? "MEMBER" : status;
         } catch (error) {
           logger.error('Error loading membership status', { error, userId: user.id, communityId: parent.id });
           return 'NOT_MEMBER';
@@ -609,16 +549,13 @@ const resolvers = {
       },
   
       isOwner: (community, args, context) => {
-        console.log("isOwner resolver:", {
-          communityId: community && community.id,
-          ownerId: community && community.ownerId,
-          user: context && context.user
-        });
+        console.log("isOwner resolver:");
         if (!context || !context.user || !community || !community.ownerId) return false;
         return community.ownerId === context.user.id;
       },
   
       isAdmin: async (parent, args, context) => {
+        console.log("isAdmin Resolver")
         const { user } = context;
         if (!user) return false;
         
@@ -632,6 +569,7 @@ const resolvers = {
       },
   
       isModerator: async (parent, args, context) => {
+        console.log("isModerator Resolver")
         const { user } = context;
         if (!user) return false;
         
@@ -645,6 +583,7 @@ const resolvers = {
       },
   
       canPost: async (parent, args, context) => {
+        console.log("CanPost Resolver")
         const { user } = context;
         if (!user) return false;
         
@@ -657,20 +596,8 @@ const resolvers = {
         }
       },
   
-      canCreateEvents: async (parent, args, context) => {
-        const { user } = context;
-        if (!user) return false;
-        
-        try {
-          // Use the service method directly for now, could be optimized with DataLoader
-          return await communityService.canCreateEvents(parent.id, user.id);
-        } catch (error) {
-          logger.error('Error loading event creation permission', { error, userId: user.id, communityId: parent.id });
-          return false;
-        }
-      },
-  
       memberCount: async (parent, args, context) => {
+        console.log("memberCount Resolver")
         const { loaders } = context;
         try {
           return await loaders.communityMemberCountLoader.load(parent.id);
@@ -678,64 +605,8 @@ const resolvers = {
           logger.error('Error loading member count', { error, communityId: parent.id });
           return parent.memberCount || 0;
         }
-      },
-  
-      owner: async (parent, args, context) => {
-        const { loaders } = context;
-        if (parent.owner) return parent.owner;
-        
-        try {
-          const user = await loaders.userLoader.load(parent.ownerId);
-          return user;
-        } catch (error) {
-          logger.error('Error loading community owner', { error, communityId: parent.id, ownerId: parent.ownerId });
-          return null;
-        }
       }
     },
-  
-    CommunityPost: {
-      isLiked: async (parent, args, context) => {
-        const { user, loaders } = context;
-        if (!user) return false;
-        
-        try {
-          // For now, use a simple check - could be optimized with DataLoader
-          const likes = await loaders.postLikesLoader.load(parent.id);
-          return likes.some(like => like.userId === user.id);
-        } catch (error) {
-          logger.error('Error loading post like status', { error, userId: user.id, postId: parent.id });
-          return false;
-        }
-      },
-
-      isBookmarked: async (parent, args, context) => {
-        const { user, loaders } = context;
-        if (!user) return false;
-        
-        try {
-          // For now, use a simple check - could be optimized with DataLoader
-          const bookmarks = await loaders.postBookmarksLoader.load(parent.id);
-          return bookmarks.some(bookmark => bookmark.userId === user.id);
-        } catch (error) {
-          logger.error('Error loading post bookmark status', { error, userId: user.id, postId: parent.id });
-          return false;
-        }
-      },
-
-      author: async (parent, args, context) => {
-        const { loaders } = context;
-        if (parent.author) return parent.author;
-        
-        try {
-          const user = await loaders.userLoader.load(parent.authorId);
-          return user;
-        } catch (error) {
-          logger.error('Error loading post author', { error, postId: parent.id, authorId: parent.authorId });
-          return null;
-        }
-      }
-    },  
 }
 
 module.exports = resolvers
