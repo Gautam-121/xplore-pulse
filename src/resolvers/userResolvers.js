@@ -6,6 +6,7 @@ const ValidationService = require('../utils/validation');
 const fileUploadService = require('../services/fileUploadService');
 const logger = require("../utils/logger")
 
+
 const userResolvers = {
   Query: {
     currentUser: requireAuth(async (_, __, { user }) => {
@@ -288,24 +289,105 @@ const userResolvers = {
             extensions: { code: 'NO_FILE_PROVIDED' }
           });
         }
-        const fileObj = await file;
-        // Validate image file before uploading
-        await fileUploadService.validateImageFile(fileObj.file);
-        const url = await fileUploadService.uploadFile(fileObj.file);
+        let fileObj = await file;
+        if (fileObj.file) fileObj = fileObj.file;
+        const { createReadStream, filename, mimetype } = fileObj;
+        const stream = createReadStream();
+        const buffer = await fileUploadService.streamToBuffer(stream);
+        const { mediaType, detectedMime } = await fileUploadService.detectMediaType(buffer, mimetype, filename);
+        let url, status = 'READY';
+        try {
+          fileUploadService.validateFileSize(mediaType, buffer.length);
+          if (mediaType === 'IMAGE') {
+            url = await fileUploadService.uploadFile({ buffer, originalname: filename, mimetype: detectedMime });
+            status = 'READY';
+          } else if (mediaType === 'VIDEO') {
+            url = await fileUploadService.uploadFile({ buffer, originalname: filename, mimetype: detectedMime });
+            status = 'READY';
+          } else if (mediaType === 'DOCUMENT') {
+            url = await fileUploadService.uploadFile({ buffer, originalname: filename, mimetype: detectedMime });
+            status = 'READY';
+          } else {
+            throw new GraphQLError('Unsupported file type', { extensions: { code: 'UNSUPPORTED_TYPE' } });
+          }
+        } catch (err) {
+          return {
+            success: false,
+            url: null,
+            type: mediaType,
+            status: 'FAILED',
+            originalName: filename,
+            mimetype: detectedMime,
+            size: buffer.length,
+            error: err.message,
+          };
+        }
         return {
           success: true,
           url,
-          message: 'File uploaded successfully.'
+          type: mediaType,
+          status,
+          originalName: filename,
+          mimetype: detectedMime,
+          size: buffer.length,
         };
       } catch (error) {
         context.logger?.error?.('uploadFile mutation failed', { error });
-        // If already a GraphQLError, just throw it
         if (error instanceof GraphQLError) throw error;
         throw new GraphQLError(error?.message || 'File upload failed.', {
           extensions: { code: 'FILE_UPLOAD_FAILED' }
         });
       }
-    })
+    }),
+
+    uploadFiles: async (_, { files }, context) => {
+      if (!Array.isArray(files) || files.length === 0) {
+        throw new GraphQLError('No files provided', { extensions: { code: 'NO_FILES' } });
+      }
+      const uploadResults = await Promise.all(files.map(async (filePromise) => {
+        let fileObj;
+        try {
+          fileObj = await filePromise; // GraphQL Upload
+          if (fileObj.file) fileObj = fileObj.file;
+          const { createReadStream, filename, mimetype } = fileObj;
+          const stream = createReadStream();
+          const buffer = await fileUploadService.streamToBuffer(stream);
+          const { mediaType, detectedMime } = await fileUploadService.detectMediaType(buffer, mimetype, filename);
+          fileUploadService.validateFileSize(mediaType, buffer.length);
+          let url, status = 'READY';
+          if (mediaType === 'IMAGE') {
+            url = await fileUploadService.uploadFile({ buffer, originalname: filename, mimetype: detectedMime });
+          } else if (mediaType === 'VIDEO') {
+            url = await fileUploadService.uploadFile({ buffer, originalname: filename, mimetype: detectedMime });
+          } else if (mediaType === 'DOCUMENT') {
+            url = await fileUploadService.uploadFile({ buffer, originalname: filename, mimetype: detectedMime });
+          } else {
+            throw new GraphQLError('Unsupported file type', { extensions: { code: 'UNSUPPORTED_TYPE' } });
+          }
+          return {
+            success: true,
+            url,
+            type: mediaType,
+            status,
+            originalName: filename,
+            mimetype: detectedMime,
+            size: buffer.length,
+          };
+        } catch (err) {
+          return {
+            success: false,
+            url: null,
+            type: null,
+            status: 'FAILED',
+            originalName: (fileObj && fileObj.filename) || null,
+            mimetype: (fileObj && fileObj.mimetype) || null,
+            size: (fileObj && fileObj.size) || null,
+            error: err.message || 'Unknown error',
+          };
+        }
+      }));
+      return uploadResults;
+    },
   },
 
   User: {

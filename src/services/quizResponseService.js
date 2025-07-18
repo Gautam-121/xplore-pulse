@@ -7,37 +7,63 @@ const sequelize = db.sequelize;
 
 const quizResponseService = {
   async answerQuiz(postId, quizId, optionId, userId) {
-    // 1. Validate post exists and contains the quiz
-    const post = await CommunityPost.findByPk(postId);
+    // 1. Validate post exists, contains quizzes, and is not soft-deleted
+    const post = await CommunityPost.findByPk(postId, { paranoid: false });
     if (!post || !Array.isArray(post.quizzes)) {
       throw new GraphQLError('Quiz post not found.', { extensions: { code: 'NOT_FOUND' } });
     }
-    // 2. Validate user is a member of the community
-    const membership = await CommunityMember.findOne({ where: { communityId: post.communityId, userId, status: 'APPROVED' } });
-    if (!membership) {
-      throw new GraphQLError('You must be a member of the community to answer quizzes.', { extensions: { code: 'FORBIDDEN' } });
+    if (post.deletedAt) {
+      throw new GraphQLError('This quiz post has been deleted.', { extensions: { code: 'POST_DELETED' } });
     }
-    // 3. Validate quizId and optionId
+    // 2. Check quiz open/close status and close time
+    if (post.quizOpen === false) {
+      throw new GraphQLError('This quiz is closed for answering.', { extensions: { code: 'QUIZ_CLOSED' } });
+    }
+    if (post.quizCloseAt && new Date(post.quizCloseAt) <= new Date()) {
+      throw new GraphQLError('This quiz has expired and is closed for answering.', { extensions: { code: 'QUIZ_EXPIRED' } });
+    }
+    // 2. Validate user is a member and not banned
+    const membership = await CommunityMember.findOne({ where: { communityId: post.communityId, userId } });
+    if (!membership || membership.status !== 'APPROVED') {
+      if (membership && membership.status === 'BANNED') {
+        throw new GraphQLError('You are banned from this community and cannot answer quizzes.', { extensions: { code: 'BANNED' } });
+      }
+      throw new GraphQLError('You must be an approved member of the community to answer quizzes.', { extensions: { code: 'FORBIDDEN' } });
+    }
+    // 3. Validate quizzes is a non-empty array
+    if (!post.quizzes.length) {
+      throw new GraphQLError('This post has no quizzes to answer.', { extensions: { code: 'NO_QUIZZES' } });
+    }
+    // 4. Validate quizId and optionId are present and valid
+    if (!quizId || typeof quizId !== 'string') {
+      throw new GraphQLError('A valid quizId must be provided.', { extensions: { code: 'INVALID_QUIZ_ID' } });
+    }
+    if (!optionId || typeof optionId !== 'string') {
+      throw new GraphQLError('A valid quiz optionId must be provided.', { extensions: { code: 'INVALID_OPTION_ID' } });
+    }
     const quiz = post.quizzes.find(q => q.id === quizId);
     if (!quiz) {
       throw new GraphQLError('Quiz not found in this post.', { extensions: { code: 'QUIZ_NOT_FOUND' } });
+    }
+    if (!Array.isArray(quiz.options) || !quiz.options.length) {
+      throw new GraphQLError('This quiz has no options to answer.', { extensions: { code: 'NO_OPTIONS' } });
     }
     const option = quiz.options.find(opt => opt.id === optionId);
     if (!option) {
       throw new GraphQLError('Invalid quiz option.', { extensions: { code: 'INVALID_OPTION' } });
     }
-    // 4. Prevent duplicate answers (unique per user per quiz per post)
+    // 5. Prevent duplicate answers (unique per user per quiz per post)
     const existing = await QuizResponse.findOne({ where: { postId, quizId, userId } });
     if (existing) {
       throw new GraphQLError('You have already answered this quiz.', { extensions: { code: 'ALREADY_ANSWERED' } });
     }
-    // 5. Transaction for atomicity
+    // 6. Transaction for atomicity
     const transaction = await sequelize.transaction();
     try {
-      // 6. Insert quiz response
+      // 7. Insert quiz response
       await QuizResponse.create({ postId, quizId, userId, optionId }, { transaction });
       await transaction.commit();
-      // 7. Return user's answer and correct answer (if allowed)
+      // 8. Return user's answer and correct answer (if allowed)
       return {
         quizId,
         userId,
@@ -46,7 +72,7 @@ const quizResponseService = {
       };
     } catch (err) {
       await transaction.rollback();
-      throw err;
+      throw new GraphQLError(err.message || 'Failed to answer quiz.', { extensions: { code: 'QUIZ_FAILED' } });
     }
   },
 

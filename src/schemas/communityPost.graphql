@@ -24,6 +24,11 @@ type CommunityPost {
   community: Community!
   createdAt: Date!
   updatedAt: Date!
+  # --- Poll/Quiz open/close fields ---
+  pollOpen: Boolean
+  pollCloseAt: Date
+  quizOpen: Boolean
+  quizCloseAt: Date
 }
 
 # --- Enums ---
@@ -76,6 +81,32 @@ input CreateCommunityPostInput {
   mentions: [UUID]
   visibility: PostVisibility
   isSponsored: Boolean
+  # --- Poll/Quiz open/close fields ---
+  pollOpen: Boolean
+  pollCloseAt: Date
+  quizOpen: Boolean
+  quizCloseAt: Date
+}
+
+input UpdateCommunityPostInput {
+  title: String
+  content: String
+  media: [MediaInput!]
+  linkUrl: String
+  linkTitle: String
+  linkDescription: String
+  linkImageUrl: String
+  quizzes: [QuizInput!]
+  pollOptions: [PollOptionInput]
+  tags: [String]
+  mentions: [UUID]
+  visibility: PostVisibility
+  isSponsored: Boolean
+  # --- Poll/Quiz open/close fields ---
+  pollOpen: Boolean
+  pollCloseAt: Date
+  quizOpen: Boolean
+  quizCloseAt: Date
 }
 
 input MediaInput {
@@ -147,24 +178,34 @@ type Reaction {
   count: Int!
 }
 
-type GenericResponse {
+type DeleteCommunityPostResponse {
   success: Boolean!
   message: String
+  postId: UUID
 }
 
 # --- Mutations ---
-type Mutation {
+extend type Mutation {
   createCommunityPost(input: CreateCommunityPostInput!): CommunityPost!
+  updateCommunityPost(postId: UUID!, input: UpdateCommunityPostInput!): CommunityPost!
+  deleteCommunityPost(postId: UUID!): DeleteCommunityPostResponse!
+
   reactToPost(postId: UUID!, type: ReactionType!): [Reaction!]!
   unreactToPost(postId: UUID!): [Reaction!]!
+  
   bookmarkPost(postId: UUID!): GenericResponse!
   unbookmarkPost(postId: UUID!): GenericResponse!
+
   voteOnPoll(postId: UUID!, optionId: UUID!): [PollOption!]!
   answerQuiz(postId: UUID!, quizId: UUID!, optionId: UUID!): QuizAnswerResponse!
+
+  # --- New close poll/quiz mutations ---
+  closePoll(postId: UUID!): GenericResponse!
+  closeQuiz(postId: UUID!): GenericResponse!
 }
 
 # --- Queries ---
-type Query {
+extend type Query {
   getPollResults(postId: UUID!): [PollOption!]!
   getQuizResults(postId: UUID!, quizId: UUID!): [QuizOptionResult!]!
   getMentions(postId: UUID!): [User!]!

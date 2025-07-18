@@ -556,13 +556,7 @@ class UserService {
                 });
             }
 
-            if(["COMMUNITY_RECOMMENDATIONS", "COMPLETED"].includes(userRecord.onboardingStep)){
-                throw new GraphQLError(
-                    "Interest selection is already done",{
-                        extensions: { code: "CONFICT_ERROR"}
-                    }
-                )
-            }
+
 
             if(userRecord.email && !userRecord.isEmailVerified && userRecord.onboardingStep === "PROFILE_SETUP"){
                 throw new GraphQLError(

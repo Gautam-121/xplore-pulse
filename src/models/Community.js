@@ -59,16 +59,6 @@ module.exports = (sequelize, Sequelize) => {
             type: Sequelize.FLOAT,
             allowNull: true
         },
-        // Settings as JSONB
-        settings: {
-            type: Sequelize.JSONB,
-            defaultValue: {
-                allowMemberPosts: true,
-                allowMemberEvents: true,
-                requirePostApproval: false,
-                allowMemberInvites: true
-            }
-        },
         // Stats as JSONB
         stats: {
             type: Sequelize.JSONB,

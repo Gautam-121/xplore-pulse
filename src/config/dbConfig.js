@@ -47,7 +47,10 @@ db.CommunityMember = require("../models/CommunityMember.js")(sequelize, Sequeliz
 db.CommunityInterest = require("../models/CommunityInterest.js")(sequelize, Sequelize);
 db.CommunityPost = require("../models/CommunityPost.js")(sequelize, Sequelize);
 db.PostBookmark = require("../models/PostBookmark.js")(sequelize, Sequelize);
-db.PostLike = require("../models/PostLike.js")(sequelize, Sequelize);
+db.PostReaction = require("../models/PostReaction.js")(sequelize, Sequelize);
+db.PostMention = require("../models/PostMention.js")(sequelize, Sequelize);
+db.PollAnswer = require("../models/PollAnswer.js")(sequelize, Sequelize);
+db.QuizResponse = require("../models/QuizResponse.js")(sequelize, Sequelize);
 
 // =======================
 // Define Model Relations
@@ -94,8 +97,12 @@ db.User.belongsToMany(db.Community, {
 
 // User ↔ CommunityPost, Likes, Bookmarks, Events
 db.User.hasMany(db.CommunityPost, { foreignKey: "authorId", as: "posts" });
-db.User.hasMany(db.PostLike, { foreignKey: "userId", as: "likedPosts" });
+db.User.hasMany(db.PostReaction, { foreignKey: "userId", as: "likedPosts" });
 db.User.hasMany(db.PostBookmark, { foreignKey: "userId", as: "bookmarkedPosts" });
+db.User.hasMany(db.PostMention, { foreignKey: "userId", as: "mentions" });
+db.User.hasMany(db.PollAnswer, { foreignKey: "userId", as: "pollAnswers" });
+db.User.hasMany(db.QuizResponse, { foreignKey: "userId", as: "quizResponses" });
+
 
 // Interest ↔ Community (Many-to-Many)
 db.Interest.belongsToMany(db.Community, {
@@ -146,17 +153,32 @@ db.CommunityMember.belongsTo(db.User, { foreignKey: "bannedBy", as: "banner" });
 db.CommunityPost.belongsTo(db.User, { foreignKey: "authorId", as: "author" });
 db.CommunityPost.belongsTo(db.Community, { foreignKey: "communityId", as: "community" });
 db.CommunityPost.belongsTo(db.User, { foreignKey: "approvedBy", as: "approver" });
-db.CommunityPost.hasMany(db.PostLike, { foreignKey: "postId", as: "likes" });
+db.CommunityPost.hasMany(db.PostReaction, { foreignKey: "postId", as: "reactions" });
 db.CommunityPost.hasMany(db.PostBookmark, { foreignKey: "postId", as: "bookmarks" });
+db.CommunityPost.hasMany(db.PostMention, { foreignKey: "postId", as: "mentions" });
+db.CommunityPost.hasMany(db.PollAnswer, { foreignKey: "postId", as: "pollAnswers" });
+db.CommunityPost.hasMany(db.QuizResponse, { foreignKey: "postId", as: "quizResponses" });
 
 
-// PostLike ↔ User & Post
-db.PostLike.belongsTo(db.User, { foreignKey: "userId", as: "user" });
-db.PostLike.belongsTo(db.CommunityPost, { foreignKey: "postId", as: "post" });
+// PostReaction ↔ User & Post
+db.PostReaction.belongsTo(db.User, { foreignKey: "userId", as: "user" });
+db.PostReaction.belongsTo(db.CommunityPost, { foreignKey: "postId", as: "post" });
 
 // PostBookmark ↔ User & Post
 db.PostBookmark.belongsTo(db.User, { foreignKey: "userId", as: "user" });
 db.PostBookmark.belongsTo(db.CommunityPost, { foreignKey: "postId", as: "post" });
+
+// PostMention ↔ User & Post
+db.PostMention.belongsTo(db.User, { foreignKey: "userId", as: "user" });
+db.PostMention.belongsTo(db.CommunityPost, { foreignKey: "postId", as: "post" });
+
+// PollAnswer ↔ User & Post
+db.PollAnswer.belongsTo(db.User, { foreignKey: "userId", as: "user" });
+db.PollAnswer.belongsTo(db.CommunityPost, { foreignKey: "postId", as: "post" });
+
+// QuizResponse ↔ User & Post
+db.QuizResponse.belongsTo(db.User, { foreignKey: "userId", as: "user" });
+db.QuizResponse.belongsTo(db.CommunityPost, { foreignKey: "postId", as: "post" });
 
 
 module.exports = db;

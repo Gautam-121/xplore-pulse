@@ -27,13 +27,30 @@ type Query {
 # Placeholder field allows schema to remain valid if no mutations are defined
 extend type Mutation {
   uploadFile(file: Upload!): FileUploadResponse!
+  uploadFiles(files: [Upload!]!): [FileUploadResponse!]!
+}
+
+enum MediaType {
+  IMAGE
+  VIDEO
+  DOCUMENT
+}
+
+enum MediaStatus {
+  PROCESSING
+  READY
+  FAILED
 }
 
 # Response type for file uploads
  type FileUploadResponse {
-   success: Boolean!
-   url: String
-   message: String
+  success: Boolean!
+  url: String!
+  type: MediaType!
+  status: MediaStatus!
+  originalName: String
+  mimetype: String
+  size: Int
  }
 
 # ------------------------------

@@ -18,16 +18,16 @@ class FileUploadService {
     });
     this.bucketName = process.env.BUCKET_NAME;
     this.defaultSubDirectory = SUBDIRECTORY;
-    
+
     // CDN configuration
     this.cdnConfig = {
       domain: process.env.CDN_DOMAIN || process.env.ENDPOINT,
       enabled: process.env.CDN_ENABLED === 'true' || false
     };
-    
-    logger.info('FileUploadService initialized with MinIO bucket', { 
+
+    logger.info('FileUploadService initialized with MinIO bucket', {
       bucketName: this.bucketName,
-      cdnEnabled: this.cdnConfig.enabled 
+      cdnEnabled: this.cdnConfig.enabled
     });
   }
 
@@ -61,7 +61,7 @@ class FileUploadService {
       };
     }
   }
-  
+
   generateUniqueFileName(originalName) {
     const timestamp = Date.now();
     const randomString = crypto.randomBytes(8).toString('hex');
@@ -95,58 +95,42 @@ class FileUploadService {
     return this._FileType;
   }
 
-  /**
-   * Validates an image file by checking its actual content (magic bytes) using file-type.
-   * Accepts file object with buffer or createReadStream. Throws if invalid.
-   */
-  async validateImageFile(file, maxSizeMB = 5) {
-    let buffer, filename;
-  
-    // 🧩 Extract buffer and filename
-    if (file) {
-      if (file.buffer) {
-        buffer = file.buffer;
-      } else if (typeof file.createReadStream === 'function') {
-        buffer = await this.streamToBuffer(file.createReadStream());
-      } else {
-        throw new GraphQLError('No buffer or stream found in file', {
-          extensions: { code: 'INVALID_FILE' }
-        });
-      }
-      filename = file.originalname || file.filename;
-    } else {
-      throw new GraphQLError('No file provided', {
-        extensions: { code: 'NO_FILE_PROVIDED' }
-      });
-    }
-  
+  // Helper: Detect file type (image, video, document)
+  async detectMediaType(buffer, mimetype, originalName) {
+
     // ✅ Dynamically import file-type module
     const FileTypeModule = await this.getFileType();
     const type = await FileTypeModule.fileTypeFromBuffer(buffer);
-  
-    // ✅ Only allow known image types
-    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
-    if (!type || !allowedTypes.includes(type.mime)) {
-      throw new GraphQLError('Invalid file type. Only JPEG, PNG, and WebP are allowed.', {
-        extensions: { code: 'INVALID_FILE_TYPE' }
-      });
+
+    if (type) {
+      if (type.mime.startsWith('image/')) return { mediaType: 'IMAGE', detectedMime: type.mime };
+      if (type.mime.startsWith('video/')) return { mediaType: 'VIDEO', detectedMime: type.mime };
+      if (type.mime === 'application/pdf') return { mediaType: 'DOCUMENT', detectedMime: type.mime };
+      // Add more document types as needed
     }
-  
-    // ✅ Enforce size check
-    const maxSize = maxSizeMB * 1024 * 1024;
-    if (buffer.length > maxSize) {
-      throw new GraphQLError(`File too large. Maximum size is ${maxSizeMB}MB.`, {
-        extensions: { code: 'FILE_TOO_LARGE' }
-      });
+    // Fallback to mimetype if file-type fails
+    if (mimetype.startsWith('image/')) return { mediaType: 'IMAGE', detectedMime: mimetype };
+    if (mimetype.startsWith('video/')) return { mediaType: 'VIDEO', detectedMime: mimetype };
+    if (mimetype === 'application/pdf' || originalName?.toLowerCase().endsWith('.pdf')) return { mediaType: 'DOCUMENT', detectedMime: mimetype };
+    // Fallback to extension if all else fails
+    if (originalName?.toLowerCase().match(/\.(jpg|jpeg|png|gif|webp)$/)) return { mediaType: 'IMAGE', detectedMime: mimetype };
+    if (originalName?.toLowerCase().match(/\.(mp4|mov|avi|mkv)$/)) return { mediaType: 'VIDEO', detectedMime: mimetype };
+    if (originalName?.toLowerCase().endsWith('.pdf')) return { mediaType: 'DOCUMENT', detectedMime: mimetype };
+    return { mediaType: 'DOCUMENT', detectedMime: mimetype }; // fallback
+  }
+
+  // Helper: Validate file size by type
+  validateFileSize(mediaType, bufferLength) {
+    const MB = 1024 * 1024;
+    if (mediaType === 'IMAGE' && bufferLength > 10 * MB) {
+      throw new GraphQLError('Image file too large. Maximum size is 10MB.', { extensions: { code: 'FILE_TOO_LARGE' } });
     }
-  
-    logger.info('✅ Image file validated (magic byte check)', {
-      filename,
-      detectedType: type.mime,
-      size: buffer.length
-    });
-  
-    return true;
+    if (mediaType === 'VIDEO' && bufferLength > 100 * MB) {
+      throw new GraphQLError('Video file too large. Maximum size is 100MB.', { extensions: { code: 'FILE_TOO_LARGE' } });
+    }
+    if (mediaType === 'DOCUMENT' && bufferLength > 10 * MB) {
+      throw new GraphQLError('Document file too large. Maximum size is 10MB.', { extensions: { code: 'FILE_TOO_LARGE' } });
+    }
   }
 
   // Accepts buffer, GraphQL Upload, or base64 string
@@ -171,8 +155,7 @@ class FileUploadService {
       if (!buffer || !fileObj.filename && !fileObj.originalname) {
         throw new GraphQLError('Invalid file object', { extensions: { code: 'BAD_USER_INPUT' } });
       }
-      // Validate file content and size before upload
-      await this.validateImageFile({ ...fileObj, buffer });
+
       const originalName = fileObj.originalname || fileObj.filename;
       const fileName = this.generateUniqueFileName(originalName);
       const key = `/${subDirectory}/${fileName}`;
@@ -234,7 +217,7 @@ class FileUploadService {
   async deleteFile(fileUrl) {
     try {
       await this.verifyMinioConnection();
-      
+
       // Extract key from URL
       let key;
       if (fileUrl.includes('.com/')) {
@@ -246,18 +229,18 @@ class FileUploadService {
       } else if (fileUrl.includes(process.env.ENDPOINT + '/')) {
         key = fileUrl.split(process.env.ENDPOINT + '/')[1];
       }
-      
+
       if (!key) {
         logger.warn('Invalid MinIO file URL', { fileUrl });
         throw new GraphQLError('Invalid MinIO file URL', { extensions: { code: 'BAD_USER_INPUT' } });
       }
-      
+
       // Remove leading slash if present
-      const objectKey = key.replace(new RegExp(`^/?${this.bucketName}/`), '');   
-      console.log("objectKey" , objectKey)   
+      const objectKey = key.replace(new RegExp(`^/?${this.bucketName}/`), '');
+      console.log("objectKey", objectKey)
       // Check if file exists before deletion
       try {
-        await this.minioClient.statObject(this.bucketName , objectKey);
+        await this.minioClient.statObject(this.bucketName, objectKey);
       } catch (error) {
         if (error.code === 'NotFound') {
           logger.warn('File not found for deletion', { fileUrl, objectKey });
@@ -265,7 +248,7 @@ class FileUploadService {
         }
         throw error;
       }
-      
+
       await this.minioClient.removeObject(this.bucketName, objectKey);
       logger.info('File deleted from MinIO', { fileUrl, objectKey });
       return true;

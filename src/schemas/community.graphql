@@ -75,130 +75,6 @@ type CommunityMember {
   requestedAt: Date!             # When the join request was made
 }
 
-# Post in a community
-# Updated for scalable, production-grade features
-
-type CommunityPost {
-  id: UUID!
-  type: PostType!
-  title: String
-  content: String
-  media: [Media!]!
-  linkUrl: String
-  linkTitle: String
-  linkDescription: String
-  linkImageUrl: String
-  quizzes: [Quiz!]
-  pollOptions: [PollOption]
-  pollCount: Int
-  tags: [String]
-  mentions: [User!]
-  visibility: PostVisibility
-  isSponsored: Boolean
-  reactions: [Reaction!]
-  isBookmarked: Boolean!
-  author: User!
-  community: Community!
-  createdAt: Date!
-  updatedAt: Date!
-}
-
-# Supported post types
-enum PostType {
-  TEXT
-  IMAGE
-  VIDEO
-  LINK
-  POLL
-  EDUCATIONAL
-  QUIZ
-  MIXED
-}
-
-# Quiz support
-input QuizOptionInput {
-  id: UUID
-  text: String!
-}
-
-input QuizInput {
-  id: UUID
-  question: String!
-  options: [QuizOptionInput!]!
-  correctOptionId: UUID
-}
-
-type QuizOption {
-  id: UUID!
-  text: String!
-}
-
-type Quiz {
-  id: UUID!
-  question: String!
-  options: [QuizOption!]!
-  correctOptionId: UUID
-}
-
-# Mentions
-# Already covered by [User!] in mentions field
-
-# Visibility
-enum PostVisibility {
-  PUBLIC
-  MEMBERS_ONLY
-  ADMINS_ONLY
-  PRIVATE
-}
-
-# Sponsorship
-# isSponsored: Boolean
-
-# Reactions
-enum ReactionType {
-  LIKE
-  LOVE
-  LAUGH
-  WOW
-  SAD
-  ANGRY
-}
-
-type Reaction {
-  type: ReactionType!
-  count: Int!
-}
-
-# Poll option for polls
-
-type PollOption {
-  id: UUID!
-  text: String!
-  voteCount: Int!
-}
-
-# Media type for mixed media posts (carousel/album)
-enum MediaType {
-  IMAGE
-  VIDEO
-}
-
-input MediaInput {
-  type: MediaType!
-  url: String!
-  thumbnailUrl: String
-  duration: Int
-  altText: String
-}
-
-type Media {
-  type: MediaType!
-  url: String!
-  thumbnailUrl: String
-  duration: Int
-  altText: String
-}
-
 # Pagination type for all connections
 type PaginationInfo {
   hasNextPage: Boolean!
@@ -226,17 +102,6 @@ type CommunityMembersConnection {
 
 type CommunityMemberEdge {
   node: CommunityMember!
-  cursor: String!
-}
-
-# Paginated wall posts list
-type CommunityWallConnection {
-  edges: [CommunityPostEdge!]!
-  pageInfo: PaginationInfo!
-}
-
-type CommunityPostEdge {
-  node: CommunityPost!
   cursor: String!
 }
 
@@ -296,26 +161,6 @@ input UpdateCommunityInput {
   # location: LocationInput
   interests: [UUID!]
 }
-
-# Input for creating posts
-input CreateCommunityPostInput {
-  communityId: UUID!
-  type: PostType!
-  title: String
-  content: String
-  media: [MediaInput!]!
-  linkUrl: String
-  linkTitle: String
-  linkDescription: String
-  linkImageUrl: String
-  quizzes: [QuizInput!]
-  pollOptions: [PollOptionInput]
-  tags: [String]
-  mentions: [UUID]
-  visibility: PostVisibility
-  isSponsored: Boolean
-}
-
 
 # Query operations
 type Query {

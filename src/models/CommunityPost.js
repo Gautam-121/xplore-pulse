@@ -64,6 +64,23 @@ module.exports = (sequelize, Sequelize) => {
             type: Sequelize.BOOLEAN,
             defaultValue: false
         },
+        // --- Poll/Quiz open/close fields ---
+        pollOpen: {
+            type: Sequelize.BOOLEAN,
+            defaultValue: true
+        },
+        pollCloseAt: {
+            type: Sequelize.DATE,
+            allowNull: true
+        },
+        quizOpen: {
+            type: Sequelize.BOOLEAN,
+            defaultValue: true
+        },
+        quizCloseAt: {
+            type: Sequelize.DATE,
+            allowNull: true
+        },
         createdAt: {
             type: Sequelize.DATE,
             defaultValue: Sequelize.NOW
@@ -75,6 +92,7 @@ module.exports = (sequelize, Sequelize) => {
         // Mentions, reactions, pollVotes, quizResponses are handled in separate models for scalability
     }, {
         timestamps: true,
+        paranoid: true,
         indexes: [
             { fields: ['communityId', 'createdAt'] },
             { fields: ['authorId'] },
