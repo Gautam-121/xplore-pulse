@@ -520,12 +520,23 @@ const communityService = {
     },
 
     async discoverCommunities({ userId, limit, cursor, filters }) {
-        const VALID_SORT_BY = ['CREATED_AT', 'MEMBER_COUNT', 'ACTIVITY', 'RELEVANCE'];
+        const VALID_SORT_BY = ['CREATED_AT', 'MEMBER_COUNT', 'ACTIVITY', 'RELEVANCE', 'TRENDING'];
         const VALID_SORT_ORDER = ['ASC', 'DESC'];
         const DEFAULT_LIMIT = 20;
         const MAX_LIMIT = 100;
-        let transaction;
-
+        
+        function arraysEqual(a, b) {
+            if (a === b) return true;
+            if (!a || !b) return false;
+            if (a.length !== b.length) return false;
+            const aSorted = [...a].sort();
+            const bSorted = [...b].sort();
+            for (let i = 0; i < aSorted.length; i++) {
+                if (aSorted[i] !== bSorted[i]) return false;
+            }
+            return true;
+        }
+    
         try {
             // 1. Validate userId
             if (!userId || typeof userId !== 'string') {
@@ -539,7 +550,7 @@ const communityService = {
                 }
                 pageSize = Math.min(limit, MAX_LIMIT);
             }
-
+    
             // 3. Validate filters
             filters = filters || {};
             if (filters.memberCountMin !== undefined && (typeof filters.memberCountMin !== 'number' || filters.memberCountMin < 0)) {
@@ -554,129 +565,207 @@ const communityService = {
             if (filters.sortOrder && !VALID_SORT_ORDER.includes(filters.sortOrder)) {
                 throw new GraphQLError(`Invalid sortOrder: ${filters.sortOrder}`, { extensions: { code: 'BAD_REQUEST_INPUT', field: 'sortOrder' } });
             }
-
-            // 4. Start transaction
-            transaction = await sequelize.transaction();
-
-            // 5. Check user existence
-            const user = await User.findByPk(userId, { transaction });
+    
+            // 4. Get user and their onboarding interests
+            const user = await User.findByPk(userId, { include: [{ model: Interest, as: 'interests', attributes: ['id'] }] });
             if (!user) {
                 throw new GraphQLError('User not found', { extensions: { code: 'USER_NOT_FOUND' } });
             }
-
-            // 6. Build query
-            const where = {};
-            if (filters.interests && Array.isArray(filters.interests) && filters.interests.length > 0) {
-                where['$interests.id$'] = { [Op.in]: filters.interests };
+            const userInterestIds = user.interests.map(i => i.id);
+    
+            if(filters.interests && filters.interests.length > 0){
+                const interests = await this.InterestModel.findAll({
+                    where: { id: filters.interests, isActive: true },
+                    transaction,
+                });
+    
+                if (interests.length !== filters.interests.length) {
+                    const foundIds = interests.map((i) => i.id);
+                    const missingIds = filters.interests.filter((id) => !foundIds.includes(id));
+                    logger.warn("Some interest IDs not found in DB", { userId, missingIds });
+                    throw new GraphQLError("Some interest IDs are invalid", {
+                        extensions: {
+                            code: "BAD_USER_INPUT",
+                            argumentName: "interestIds",
+                            missingIds,
+                        },
+                    });
+                } 
             }
-            if (filters.isPaid !== undefined) where.isPaid = filters.isPaid;
-            if (filters.isPrivate !== undefined) where.isPrivate = filters.isPrivate;
-            if (filters.memberCountMin !== undefined) {
-                where.memberCount = { ...(where.memberCount || {}), [Op.gte]: filters.memberCountMin };
-            }
-            if (filters.memberCountMax !== undefined) {
-                where.memberCount = { ...(where.memberCount || {}), [Op.lte]: filters.memberCountMax };
-            }
-
-            // 7. Exclude communities user is already a member of
+    
+            // 6. Use filter interests if provided, else use userInterestIds
+            const filterInterestIds = filters.interests && filters.interests.length > 0 ? filters.interests : userInterestIds;
+    
+            // 7. Exclude already joined/owned communities
             const userMemberships = await CommunityMember.findAll({
-                where: {
-                    userId,
-                    status: { [Op.in]: ['BANNED'] }
-                },
+                where: { userId },
                 attributes: ['communityId'],
-                raw: true,
-                transaction
+                raw: true
             });
             const excludedCommunityIds = userMemberships.map(m => m.communityId);
-            if (excludedCommunityIds.length > 0) {
-                where.id = { ...(where.id || {}), [Op.notIn]: excludedCommunityIds };
+    
+            // 8. Cursor-based pagination (applied after combining tiers)
+    
+            // 9. Fetch communities in priority order
+            let communities = [];
+            // Tier 1: Communities matching user's onboarding interests
+            let tier1 = [];
+            if (userInterestIds.length > 0) {
+                tier1 = await Community.findAll({
+                    where: {
+                        id: { [Op.notIn]: excludedCommunityIds },
+                        '$interests.id$': { [Op.in]: userInterestIds },
+                        ...(filters.isPaid !== undefined ? { isPaid: filters.isPaid } : {}),
+                        ...(filters.isPrivate !== undefined ? { isPrivate: filters.isPrivate } : {}),
+                        ...(filters.memberCountMin !== undefined ? { memberCount: { [Op.gte]: filters.memberCountMin } } : {}),
+                        ...(filters.memberCountMax !== undefined ? { memberCount: { [Op.lte]: filters.memberCountMax } } : {}),
+                    },
+                    include: [
+                        { model: User, as: 'owner', attributes: ['id', 'name', 'profileImageUrl'] },
+                        { model: Interest, as: 'interests', attributes: ['id', 'name', 'category', 'iconUrl'] }
+                    ]
+                });
             }
-
-            // 8. Cursor-based pagination
-            let cursorCondition = {};
-            let decodedCursor = null;
+            // Tier 2: Communities matching filter interests (if different from onboarding interests)
+            let tier2 = [];
+            if (filters.interests && filters.interests.length > 0 && !arraysEqual(filters.interests, userInterestIds)) {
+                tier2 = await Community.findAll({
+                    where: {
+                        id: { [Op.notIn]: [...excludedCommunityIds, ...tier1.map(c => c.id)] },
+                        '$interests.id$': { [Op.in]: filterInterestIds },
+                        ...(filters.isPaid !== undefined ? { isPaid: filters.isPaid } : {}),
+                        ...(filters.isPrivate !== undefined ? { isPrivate: filters.isPrivate } : {}),
+                        ...(filters.memberCountMin !== undefined ? { memberCount: { [Op.gte]: filters.memberCountMin } } : {}),
+                        ...(filters.memberCountMax !== undefined ? { memberCount: { [Op.lte]: filters.memberCountMax } } : {}),
+                    },
+                    include: [
+                        { model: User, as: 'owner', attributes: ['id', 'name', 'profileImageUrl'] },
+                        { model: Interest, as: 'interests', attributes: ['id', 'name', 'category', 'iconUrl'] }
+                    ]
+                });
+            }
+            // Tier 3: Popular/trending communities
+            const tier3 = await Community.findAll({
+                where: {
+                    id: { [Op.notIn]: [...excludedCommunityIds, ...tier1.map(c => c.id), ...tier2.map(c => c.id)] },
+                    ...(filters.isPaid !== undefined ? { isPaid: filters.isPaid } : {}),
+                    ...(filters.isPrivate !== undefined ? { isPrivate: filters.isPrivate } : {}),
+                    ...(filters.memberCountMin !== undefined ? { memberCount: { [Op.gte]: filters.memberCountMin } } : {}),
+                    ...(filters.memberCountMax !== undefined ? { memberCount: { [Op.lte]: filters.memberCountMax } } : {}),
+                },
+                include: [
+                    { model: User, as: 'owner', attributes: ['id', 'name', 'profileImageUrl'] },
+                    { model: Interest, as: 'interests', attributes: ['id', 'name', 'category', 'iconUrl'] }
+                ],
+                order: [['memberCount', 'DESC'], ['lastActivityAt', 'DESC']]
+            });
+            // Tier 4: Other communities
+            const tier4 = await Community.findAll({
+                where: {
+                    id: { [Op.notIn]: [...excludedCommunityIds, ...tier1.map(c => c.id), ...tier2.map(c => c.id), ...tier3.map(c => c.id)] },
+                    ...(filters.isPaid !== undefined ? { isPaid: filters.isPaid } : {}),
+                    ...(filters.isPrivate !== undefined ? { isPrivate: filters.isPrivate } : {}),
+                    ...(filters.memberCountMin !== undefined ? { memberCount: { [Op.gte]: filters.memberCountMin } } : {}),
+                    ...(filters.memberCountMax !== undefined ? { memberCount: { [Op.lte]: filters.memberCountMax } } : {}),
+                },
+                include: [
+                    { model: User, as: 'owner', attributes: ['id', 'name', 'profileImageUrl'] },
+                    { model: Interest, as: 'interests', attributes: ['id', 'name', 'category', 'iconUrl'] }
+                ],
+                order: [['createdAt', 'DESC']]
+            });
+    
+            // Combine, deduplicate, and paginate
+            const allCommunities = [...tier1, ...tier2, ...tier3, ...tier4];
+            const seen = new Set();
+            const deduped = [];
+            for (const c of allCommunities) {
+                if (!seen.has(c.id)) {
+                    deduped.push(c);
+                    seen.add(c.id);
+                }
+            }
+    
+            // Fine-tuned scoring and explicit sort handling
+            const now = new Date();
+            let scored;
+            switch (filters.sortBy) {
+                case 'TRENDING':
+                    scored = deduped.map(c => {
+                        const stats = c.stats || {};
+                        const weeklyGrowth = stats.weeklyGrowth || 0;
+                        const recentPosts = stats.recentPosts || 0;
+                        const recentReactions = stats.recentReactions || 0;
+                        const memberCount = c.memberCount || 0;
+                        const lastPostAt = stats.lastPostAt ? new Date(stats.lastPostAt) : null;
+                        const lastPostIsRecent = lastPostAt && (now - lastPostAt) < 1000 * 60 * 60 * 24 * 2; // 2 days
+                        const score =
+                            (weeklyGrowth * 3) +
+                            (recentPosts * 2) +
+                            recentReactions +
+                            (memberCount / 20) +
+                            (lastPostIsRecent ? 5 : 0);
+                        return { community: c, score };
+                    }).sort((a, b) => b.score - a.score);
+                    break;
+                case 'RELEVANCE':
+                default:
+                    scored = deduped.map(c => {
+                        const sharedInterests = c.interests.filter(i => userInterestIds.includes(i.id)).length;
+                        const popularity = c.memberCount;
+                        const isNew = (now - new Date(c.createdAt)) < 1000 * 60 * 60 * 24 * 7; // 7 days
+                        const isActive = c.lastActivityAt && (now - new Date(c.lastActivityAt)) < 1000 * 60 * 60 * 24 * 3; // 3 days
+                        const score =
+                            (sharedInterests * 10) +
+                            (popularity / 100) +
+                            (isNew ? 10 : 0) +
+                            (isActive ? 5 : 0) +
+                            (!c.isPaid ? 2 : 0);
+                        return { community: c, score };
+                    }).sort((a, b) => b.score - a.score);
+                    break;
+                case 'CREATED_AT':
+                    scored = deduped.map(c => ({ community: c, score: 0 }))
+                        .sort((a, b) => new Date(b.community.createdAt) - new Date(a.community.createdAt));
+                    break;
+                case 'MEMBER_COUNT':
+                    scored = deduped.map(c => ({ community: c, score: 0 }))
+                        .sort((a, b) => (b.community.memberCount || 0) - (a.community.memberCount || 0));
+                    break;
+                case 'ACTIVITY':
+                    scored = deduped.map(c => ({ community: c, score: 0 }))
+                        .sort((a, b) => {
+                            const aTime = a.community.lastActivityAt ? new Date(a.community.lastActivityAt) : new Date(0);
+                            const bTime = b.community.lastActivityAt ? new Date(b.community.lastActivityAt) : new Date(0);
+                            return bTime - aTime;
+                        });
+                    break;
+            }
+    
+            // Apply cursor-based pagination
+            let startIdx = 0;
             if (cursor) {
                 try {
                     const decoded = Buffer.from(cursor, 'base64').toString('utf8');
-                    decodedCursor = JSON.parse(decoded);
-                    if (!decodedCursor.id || !decodedCursor.createdAt) throw new Error('Invalid cursor');
-                    cursorCondition = {
-                        [Op.or]: [
-                            { createdAt: { [Op.lt]: decodedCursor.createdAt } },
-                            {
-                                createdAt: decodedCursor.createdAt,
-                                id: { [Op.lt]: decodedCursor.id }
-                            }
-                        ]
-                    };
+                    const decodedCursor = JSON.parse(decoded);
+                    startIdx = scored.findIndex(({ community: c }) => c.id === decodedCursor.id && c.createdAt.toISOString() === decodedCursor.createdAt);
+                    if (startIdx === -1) startIdx = 0;
+                    else startIdx += 1; // start after the cursor
                 } catch (err) {
                     throw new GraphQLError('Malformed cursor', { extensions: { code: 'BAD_REQUEST_INPUT', field: 'cursor' } });
                 }
             }
-
-            // 9. Sorting
-            let order = [['createdAt', 'DESC']];
-            if (filters.sortBy) {
-                switch (filters.sortBy) {
-                    case 'MEMBER_COUNT':
-                        order = [['memberCount', filters.sortOrder === 'ASC' ? 'ASC' : 'DESC']];
-                        break;
-                    case 'ACTIVITY':
-                        order = [['lastActivityAt', 'DESC']];
-                        break;
-                    // No DISTANCE
-                    case 'RELEVANCE':
-                        // We'll sort in-memory after fetching
-                        break;
-                    default:
-                        order = [['createdAt', 'DESC']];
-                }
-            }
-
-            // 10. Query communities
-            const communities = await Community.findAll({
-                where: { ...where, ...cursorCondition },
-                order: filters.sortBy === 'RELEVANCE' ? undefined : order,
-                limit: pageSize + 1,
-                include: [
-                    { model: User, as: 'owner', attributes: ['id', 'name', 'profileImageUrl'] },
-                    { model: Interest, as: 'interests', attributes: ['id', 'name', 'category', 'icon'] }
-                ],
-                transaction
-            });
-
-            // 11. Relevance sorting (in-memory)
-            let sortedCommunities = communities;
-            if (filters.sortBy === 'RELEVANCE') {
-                // Compute user interest IDs
-                const userInterests = await user.getInterests({ attributes: ['id'], transaction });
-                const userInterestIds = userInterests.map(i => i.id);
-
-                sortedCommunities = communities
-                    .map(community => {
-                        const sharedInterests = community.interests.filter(i => userInterestIds.includes(i.id)).length;
-                        const memberScore = community.memberCount || 0;
-                        const activityScore = community.lastActivityAt ? 5 : 0;
-                        const relevanceScore = (sharedInterests * 10) + (memberScore / 100) + activityScore;
-                        return { community, relevanceScore };
-                    })
-                    .sort((a, b) => b.relevanceScore - a.relevanceScore)
-                    .map(item => item.community);
-            }
-
-            // 12. Pagination logic
-            const hasNextPage = sortedCommunities.length > pageSize;
-            const paginatedCommunities = hasNextPage ? sortedCommunities.slice(0, pageSize) : sortedCommunities;
-            const edges = paginatedCommunities.map(community => ({
+            const paginated = scored.slice(startIdx, startIdx + pageSize + 1);
+            const hasNextPage = paginated.length > pageSize;
+            const paginatedCommunities = hasNextPage ? paginated.slice(0, pageSize) : paginated;
+            const edges = paginatedCommunities.map(({ community }) => ({
                 node: community,
                 cursor: Buffer.from(JSON.stringify({ id: community.id, createdAt: community.createdAt })).toString('base64')
             }));
-
+    
             // 13. Total count (for this filter)
-            const totalCount = await Community.count({ where, transaction });
-
-            await transaction.commit();
+            const totalCount = scored.length;
+    
             return {
                 edges,
                 pageInfo: {
@@ -687,9 +776,6 @@ const communityService = {
                 }
             };
         } catch (error) {
-            if (transaction && !transaction.finished) {
-                await transaction.rollback();
-            }
             logger.error('Error in discoverCommunities', { error, userId, limit, cursor, filters });
             if (error instanceof GraphQLError) throw error;
             throw new GraphQLError('Failed to discover communities', { extensions: { code: 'INTERNAL_SERVER_ERROR' } });
@@ -3057,6 +3143,234 @@ const communityService = {
             throw new GraphQLError('Failed to fetch community', {
                 extensions: { code: 'GET_COMMUNITY_FAILED', originalError: error.message }
             });
+        }
+    },
+
+    async recommendedCommunities({ userId, limit = 20, after, isPaid, trending }) {
+        const DEFAULT_LIMIT = 20;
+        const MAX_LIMIT = 100;
+        try {
+            logger.info('recommendedCommunities called', { userId, limit, after, isPaid, trending });
+            // 1. Validate userId
+            if (!userId || typeof userId !== 'string') {
+                throw new GraphQLError('Missing or invalid userId', { 
+                    extensions: { code: 'BAD_REQUEST_INPUT', field: 'userId' } 
+                });
+            }
+            
+            // 2. Validate limit
+            let pageSize = DEFAULT_LIMIT;
+            if (limit !== undefined) {
+                if (typeof limit !== 'number' || isNaN(limit) || limit <= 0) {
+                    throw new GraphQLError('limit must be a positive integer', { 
+                        extensions: { code: 'BAD_REQUEST_INPUT', field: 'limit' } 
+                    });
+                }
+                pageSize = Math.min(limit, MAX_LIMIT);
+            }
+            
+            // 3. Get user and their onboarding interests
+            const user = await User.findByPk(userId, { 
+                include: [{ 
+                    model: Interest, 
+                    as: 'interests' 
+                }] 
+            });
+            
+            if (!user) {
+                throw new GraphQLError('User not found', { 
+                    extensions: { code: 'USER_NOT_FOUND' } 
+                });
+            }
+            
+            const userInterestIds = user.interests.map(i => i.id);            
+            // 4. Exclude already joined/owned communities
+            const userMemberships = await CommunityMember.findAll({
+                where: { userId },
+                raw: true
+            });
+            const excludedCommunityIds = userMemberships.map(m => m.communityId);
+
+            
+            // 5. Build where clause
+            let where = {
+                id: { [Op.notIn]: excludedCommunityIds }
+            };
+            
+            if (isPaid !== undefined) {
+                where.isPaid = isPaid;
+            }
+            
+            // 6. Fetch communities
+            let communities;
+            if (trending) {
+                communities = await Community.findAll({
+                    where,
+                    include: [
+                        { 
+                            model: User, 
+                            as: 'owner',
+                            attributes: ['id', 'name', 'email', 'profileImageUrl', 'isActive']
+                        },
+                        { 
+                            model: Interest, 
+                            as: 'interests', 
+                            where: { id: userInterestIds }, 
+                            required: true 
+                        }
+                    ]
+                });
+                
+                // Trending scoring
+                const now = new Date();
+                const scored = communities.map(c => {
+                    const stats = c.stats || {};
+                    const weeklyGrowth = stats.weeklyGrowth || 0;
+                    const recentPosts = stats.recentPosts || 0;
+                    const recentReactions = stats.recentReactions || 0;
+                    const memberCount = c.memberCount || 0;
+                    const lastPostAt = stats.lastPostAt ? new Date(stats.lastPostAt) : null;
+                    const lastPostIsRecent = lastPostAt && (now - lastPostAt) < 1000 * 60 * 60 * 24 * 2; // 2 days
+                    
+                    const score =
+                        (weeklyGrowth * 3) +
+                        (recentPosts * 2) +
+                        recentReactions +
+                        (memberCount / 20) +
+                        (lastPostIsRecent ? 5 : 0);
+                        
+                    return { community: c, score };
+                }).sort((a, b) => b.score - a.score);
+                
+                // Pagination
+                let startIdx = 0;
+                if (after) {
+                    try {
+                        const decoded = Buffer.from(after, 'base64').toString('utf8');
+                        const decodedCursor = JSON.parse(decoded);
+                        startIdx = scored.findIndex(({ community: c }) => 
+                            c.id === decodedCursor.id && c.createdAt.toISOString() === decodedCursor.createdAt
+                        );
+                        if (startIdx === -1) startIdx = 0;
+                        else startIdx += 1; // start after the cursor
+                    } catch (err) {
+                        throw new GraphQLError('Malformed cursor', { 
+                            extensions: { code: 'BAD_REQUEST_INPUT', field: 'after' } 
+                        });
+                    }
+                }
+                
+                const paginated = scored.slice(startIdx, startIdx + pageSize + 1);
+                const hasNextPage = paginated.length > pageSize;
+                const paginatedCommunities = hasNextPage ? paginated.slice(0, pageSize) : paginated;
+                
+                const edges = paginatedCommunities.map(({ community }) => ({
+                    node: community,
+                    cursor: Buffer.from(JSON.stringify({ 
+                        id: community.id, 
+                        createdAt: community.createdAt 
+                    })).toString('base64')
+                }));
+                
+                const totalCount = scored.length;
+                const result = {
+                    edges: edges || [],
+                    pageInfo: {
+                        hasNextPage,
+                        hasPreviousPage: !!after,
+                        totalCount,
+                        cursor: hasNextPage ? edges[edges.length - 1].cursor : null
+                    }
+                };
+                
+                logger.info('recommendedCommunities result', result);
+                return result;
+                
+            } else {
+                communities = await Community.findAll({
+                    where,
+                    include: [
+                        { 
+                            model: User, 
+                            as: 'owner',
+                            attributes: ['id', 'name', 'email', 'profileImageUrl', 'isActive']
+                        },
+                        { 
+                            model: Interest, 
+                            as: 'interests', 
+                            where: { id: userInterestIds }, 
+                            required: true 
+                        }
+                    ]
+                });
+                
+                // 8. Score and sort if not trending
+                const now = new Date();
+                const scored = communities.map(c => {
+                    const sharedInterests = c.interests.filter(i => userInterestIds.includes(i.id)).length;
+                    const popularity = c.memberCount;
+                    const isNew = (now - new Date(c.createdAt)) < 1000 * 60 * 60 * 24 * 7; // 7 days
+                    const isActive = c.lastActivityAt && (now - new Date(c.lastActivityAt)) < 1000 * 60 * 60 * 24 * 3; // 3 days
+                    
+                    const score =
+                        (sharedInterests * 10) +
+                        (popularity / 100) +
+                        (isNew ? 10 : 0) +
+                        (isActive ? 5 : 0) +
+                        (!c.isPaid ? 2 : 0);
+                        
+                    return { community: c, score };
+                }).sort((a, b) => b.score - a.score);
+                
+                // 9. Apply cursor-based pagination
+                let startIdx = 0;
+                if (after) {
+                    try {
+                        const decoded = Buffer.from(after, 'base64').toString('utf8');
+                        const decodedCursor = JSON.parse(decoded);
+                        startIdx = scored.findIndex(({ community: c }) => 
+                            c.id === decodedCursor.id && c.createdAt.toISOString() === decodedCursor.createdAt
+                        );
+                        if (startIdx === -1) startIdx = 0;
+                        else startIdx += 1; // start after the cursor
+                    } catch (err) {
+                        throw new GraphQLError('Malformed cursor', { 
+                            extensions: { code: 'BAD_REQUEST_INPUT', field: 'after' } 
+                        });
+                    }
+                }
+                
+                const paginated = scored.slice(startIdx, startIdx + pageSize + 1);
+                const hasNextPage = paginated.length > pageSize;
+                const paginatedCommunities = hasNextPage ? paginated.slice(0, pageSize) : paginated;
+                
+                const edges = paginatedCommunities.map(({ community }) => ({
+                    node: community,
+                    cursor: Buffer.from(JSON.stringify({ 
+                        id: community.id, 
+                        createdAt: community.createdAt 
+                    })).toString('base64')
+                }));
+                
+                // 10. Total count
+                const totalCount = scored.length;
+                const result = {
+                    edges: edges || [],
+                    pageInfo: {
+                        hasNextPage,
+                        hasPreviousPage: !!after,
+                        totalCount,
+                        cursor: hasNextPage ? edges[edges.length - 1].cursor : null
+                    }
+                };
+                
+                logger.info('recommendedCommunities result', result);
+                return result;
+            }
+        } catch (error) {
+            logger.error('Error in recommendedCommunities', { error, userId, limit, after, isPaid, trending });
+            if (error instanceof GraphQLError) throw error;
+            throw new GraphQLError('Failed to fetch recommended communities', { extensions: { code: 'RECOMMENDED_COMMUNITIES_FAILED' } });
         }
     },
 

@@ -107,7 +107,13 @@ module.exports = (sequelize, Sequelize) => {
               name: 'idx_community_slug',
               unique: true,
               fields: ['slug']
+            },
+            {
+              name: 'idx_community_createdAt',
+              fields: ['createdAt']
             }
+            // If you have isActive, you can also add:
+            // { name: 'idx_community_isActive', fields: ['isActive'] }
         ]
     });
     return Community

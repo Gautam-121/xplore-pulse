@@ -16,24 +16,6 @@ const resolvers = {
             cursor: after,
             filters: filters || {}
           });
-
-          // Use DataLoader to batch load related data
-          const communityIds = result.edges.map(edge => edge.node.id);
-          const ownerIds = result.edges.map(edge => edge.node.ownerId).filter(Boolean);
-
-          // Batch load owners using DataLoader
-          const owners = await Promise.all(
-            ownerIds.map(id => loaders.userLoader.load(id))
-          );
-
-          // Attach owners to communities
-          result.edges.forEach((edge, index) => {
-            if (edge.node.ownerId) {
-              const owner = owners.find(o => o && o.id === edge.node.ownerId);
-              edge.node.owner = owner;
-            }
-          });
-
           return result;
         } catch (error) {
           logger.error('Error in discoverCommunities query', { error, userId: user?.id });
@@ -127,11 +109,30 @@ const resolvers = {
 
       recommendedCommunities: requireAuth(async (parent, args, context) => {
         const { user } = context;
-        const { first } = args;
-        return await communityService.getRecommendedCommunities({
-          userId: user.id,
-          limit: first
-        });
+        // Destructure all possible args with defaults
+        const {
+          first = 20,
+          after = null,
+          isPaid = undefined,
+          trending = undefined
+        } = args;
+
+        try {
+          const result = await communityService.recommendedCommunities({
+            userId: user.id,
+            limit: first,
+            after,
+            isPaid,
+            trending
+          });
+          return result;
+        } catch (error) {
+          logger.error('Error in recommendedCommunities resolver', { error, userId: user?.id });
+          if (error instanceof GraphQLError) throw error;
+          throw new GraphQLError('Failed to fetch recommended communities', {
+            extensions: { code: 'INTERNAL_SERVER_ERROR' }
+          });
+        }
       })
     },
   

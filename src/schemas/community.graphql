@@ -261,6 +261,7 @@ enum CommunitySortBy {
   MEMBER_COUNT
   ACTIVITY
   RELEVANCE
+  TRENDING
 }
 
 enum SortOrder {
@@ -325,7 +326,9 @@ type Query {
   community(id: UUID!): Community
   communityMembers(communityId: UUID!, first: Int = 20, after: String, role: MemberRole, status: MemberRequestStatus): CommunityMembersConnection!
   pendingMemberRequests(communityId: UUID!, first: Int = 20, after: String): CommunityMembersConnection!
-  recommendedCommunities(first: Int = 10): [Community!]!
+  # Returns a paginated list of communities recommended for the current user based on their onboarding interests, activity, popularity, and other factors.
+  # Only supports isPaid and trending filters for a pure, personalized feed.
+  recommendedCommunities(first: Int = 20, after: String, isPaid: Boolean, trending: Boolean): CommunitiesConnection!
 }
 
 # Mutation operations

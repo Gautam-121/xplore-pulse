@@ -6,7 +6,11 @@ module.exports = (sequelize, Sequelize) => {
             primaryKey: true
         },
     }, {
-        timestamps: true
+        timestamps: true,
+        indexes: [
+            { fields: ['communityId', 'interestId'] },
+            { fields: ['interestId', 'communityId'] }
+        ]
     });
     return CommunityInterest
 };
