@@ -641,7 +641,7 @@ class UserService {
             });
 
             await updatedUser.update(
-                { onboardingStep: "COMPLETED" },
+                { onboardingStep: "COMMUNITY_RECOMMENDATIONS" },
                 { transaction }
             );
             await transaction.commit();
